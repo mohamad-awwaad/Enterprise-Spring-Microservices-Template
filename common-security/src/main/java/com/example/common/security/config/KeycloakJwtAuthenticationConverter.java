@@ -10,6 +10,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtGra
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -24,7 +25,7 @@ public class KeycloakJwtAuthenticationConverter implements Converter<Jwt, Abstra
                 defaultGrantedAuthoritiesConverter.convert(jwt).stream(),
                 extractResourceRoles(jwt).stream())
                 .collect(Collectors.toSet());
-        return new JwtAuthenticationToken(jwt, authorities, jwt.getClaim("preferred_username"));
+        return new JwtAuthenticationToken(jwt, authorities, (String) Objects.requireNonNull(jwt.getClaim("preferred_username")));
     }
 
     private Collection<GrantedAuthority> extractResourceRoles(Jwt jwt) {
