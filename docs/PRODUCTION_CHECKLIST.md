@@ -20,6 +20,11 @@ This document outlines the specific infrastructure configurations and policy aud
 - [ ] **SMTP Server:**
     - Configure a real SMTP server for email delivery (registration confirmation, password reset).
     - Current implementation uses `LoggingEmailService` which only logs emails.
+    - `LoggingEmailService` is annotated `@Profile("!prod")`, so it is not registered when the
+      `prod` profile is active. Provide a real `EmailService` bean (e.g. `SmtpEmailService`)
+      before deploying with `prod` - otherwise the app fails to start (no `EmailService` bean
+      for `RegistrationService` to inject), which is intentional fail-fast behavior rather than
+      silently logging confirmation tokens instead of emailing them.
     - Replace with production `SmtpEmailService` implementation.
     - Required properties:
       ```properties

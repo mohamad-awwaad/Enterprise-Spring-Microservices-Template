@@ -39,6 +39,15 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
+        <!-- Needed only to obtain a client-credentials token (as the "internal" registration)
+             for calling keycloak-admin-service's now-authenticated /api/users/register. With no
+             authorization_code registration configured, Boot's OAuth2 login auto-config does not
+             add a login SecurityFilterChain, so this does not change the resource-server chain
+             that common-security's ResourceServerSecurityAutoConfiguration provides. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-client</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

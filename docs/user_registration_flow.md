@@ -61,6 +61,11 @@ The registration flow allows new users to create accounts without admin interven
        │                   │                   │                     │                    │
 ```
 
+Step 9 (`Create user (via admin API)`) is Profile Service calling keycloak-admin-service's
+`/api/users/register`, which now requires a bearer token with the `INTERNAL_SERVICE` realm role.
+Profile Service obtains this token itself via a client-credentials grant for the `internal`
+client registration (`internal-client`) before making the call - see `KeycloakAdminClient`.
+
 ## Security Design Decisions
 
 ### 1. Keycloak User Created AFTER Email Confirmation

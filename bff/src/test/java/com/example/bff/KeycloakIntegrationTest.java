@@ -110,9 +110,12 @@ class KeycloakIntegrationTest {
         
         RestClient restClient = RestClient.create();
 
+        // bff-client no longer allows the password grant (directAccessGrantsEnabled=false -
+        // it only performs the authorization_code flow in real usage); test-client is a
+        // confidential client dedicated to integration tests/curl and kept enabled for it.
         MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
-        formData.add("client_id", "bff-client");
-        formData.add("client_secret", "mysecret");
+        formData.add("client_id", "test-client");
+        formData.add("client_secret", "test-secret");
         formData.add("grant_type", "password");
         formData.add("username", "user");
         formData.add("password", "password");

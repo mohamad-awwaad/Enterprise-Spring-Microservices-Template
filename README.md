@@ -103,15 +103,15 @@ This starts:
 - Redis
 - All Spring Boot services
 
-### 2. Configure Keycloak (First Time Only)
+### 2. Keycloak is Pre-Configured
 
-The `admin-service-client` needs permissions to manage users:
+The realm import (`keycloak/realm-config/realm-export.json`) already grants
+`admin-service-client`'s service account the `realm-management` client roles
+(`manage-users`, `view-users`) it needs to manage users - no manual setup required.
 
-1. Login to [http://localhost:8080/admin](http://localhost:8080/admin) (`admin` / `admin`)
-2. Select **my-realm** (top-left dropdown)
-3. Go to **Clients** → **admin-service-client** → **Service Account Roles**
-4. Click **Assign Role** → Filter by **clients** → Select **realm-management**
-5. Assign **manage-users** and **view-users** roles
+To verify: log in to [http://localhost:8080/admin](http://localhost:8080/admin) (`admin` / `admin`),
+select **my-realm**, then **Clients** → **admin-service-client** → **Service Account Roles** and
+confirm **manage-users** and **view-users** are listed.
 
 ### 3. Start Angular UI
 
@@ -267,6 +267,13 @@ View in Zipkin to see timing breakdown across services.
 ---
 
 ## Security Patterns
+
+Every resource server (Gateway, profile-service, order-service, keycloak-admin-service)
+requires the `aud=template-api` claim on every token it accepts, so a token minted for an
+unrelated client is rejected even if it's otherwise valid; and the internal user-registration
+call from profile-service to keycloak-admin-service is itself authenticated with an
+`internal-client` client-credentials token carrying the `INTERNAL_SERVICE` realm role, not
+left open behind the Gateway's block route alone.
 
 ### Web Application Flow (BFF Pattern)
 
@@ -459,11 +466,15 @@ Note: Public endpoints follow the pattern `/bff/public/{service}/{path}` which m
 
 ### Mobile Endpoints (via Gateway)
 
+`bff-client` is a confidential, browser-only client (`directAccessGrantsEnabled=false`); it
+cannot do a password grant. For quick curl testing, use `test-client`, a confidential client
+dedicated to integration tests and manual API calls:
+
 ```bash
-# Get access token
+# Get access token (test-client - integration tests/curl only)
 curl -X POST http://localhost:8080/realms/my-realm/protocol/openid-connect/token \
-  -d "client_id=bff-client" \
-  -d "client_secret=mysecret" \
+  -d "client_id=test-client" \
+  -d "client_secret=test-secret" \
   -d "grant_type=password" \
   -d "username=user" \
   -d "password=password"
@@ -471,6 +482,9 @@ curl -X POST http://localhost:8080/realms/my-realm/protocol/openid-connect/token
 # Call API
 curl -H "Authorization: Bearer <TOKEN>" http://localhost:8888/profile
 ```
+
+Real mobile apps should instead use the public `mobile-client` with the authorization code
+flow + PKCE (`S256`) - it has no client secret and never performs a password grant.
 
 ### Error Responses (RFC 9457, formerly RFC 7807)
 
@@ -556,13 +570,16 @@ npm test                       # Run tests
 
 ### Keycloak Configuration
 
-| Setting       | Value                  |
-|---------------|------------------------|
-| Realm         | `my-realm`             |
-| BFF Client    | `bff-client`           |
-| Admin Client  | `admin-service-client` |
-| Test User     | `user` / `password`    |
-| Admin Console | `admin` / `admin`      |
+| Setting          | Value                                                             |
+|------------------|--------------------------------------------------------------------|
+| Realm            | `my-realm`                                                        |
+| BFF Client       | `bff-client` (confidential, authorization code + PKCE only)       |
+| Admin Client     | `admin-service-client`                                            |
+| Internal Client  | `internal-client` (service-to-service, `INTERNAL_SERVICE` role)   |
+| Test Client      | `test-client` / `test-secret` (integration tests/curl only)       |
+| Mobile Client    | `mobile-client` (public, authorization code + PKCE)               |
+| Test User        | `user` / `password`                                               |
+| Admin Console    | `admin` / `admin`                                                 |
 
 ---
 

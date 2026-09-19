@@ -3,6 +3,9 @@ package com.example.profileservice.service;
 import com.example.profileservice.dto.UserRegistrationDTO;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClientManager;
+import org.springframework.security.oauth2.client.web.client.OAuth2ClientHttpRequestInterceptor;
+import org.springframework.security.oauth2.client.web.client.RequestAttributeClientRegistrationIdResolver;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -10,6 +13,7 @@ import org.springframework.web.client.RestClient;
 public class KeycloakAdminClient {
 
     private final RestClient restClient;
+    private final RestClient internalServiceRestClient;
 
     @Value("${keycloak.admin-service.url}")
     private String adminServiceUrl;
@@ -20,9 +24,24 @@ public class KeycloakAdminClient {
      * {@code restClientBuilder.build()} on every request - keeps Boot's auto-configured
      * builder (Micrometer observation/trace propagation, {@code spring.http.clients.*}
      * timeouts) instead of discarding it each time.
+     * <p>
+     * {@code internalServiceRestClient} is a second client built from its own builder
+     * injection point (each is a fresh prototype instance), with an
+     * {@link OAuth2ClientHttpRequestInterceptor} added on top. That interceptor obtains
+     * (and transparently refreshes) a client-credentials token for whichever client
+     * registration the request is tagged with via
+     * {@link RequestAttributeClientRegistrationIdResolver#clientRegistrationId(String)} and
+     * attaches it as the Authorization header - used only by
+     * {@link #createUserWithPasswordAction} to call the now-authenticated
+     * {@code /api/users/register} endpoint as the "internal" service account.
      */
-    public KeycloakAdminClient(RestClient.Builder restClientBuilder) {
+    public KeycloakAdminClient(RestClient.Builder restClientBuilder,
+                                RestClient.Builder internalServiceRestClientBuilder,
+                                OAuth2AuthorizedClientManager authorizedClientManager) {
         this.restClient = restClientBuilder.build();
+        this.internalServiceRestClient = internalServiceRestClientBuilder
+                .requestInterceptor(new OAuth2ClientHttpRequestInterceptor(authorizedClientManager))
+                .build();
     }
 
     public String createUser(UserRegistrationDTO dto, String bearerToken) {
@@ -45,6 +64,10 @@ public class KeycloakAdminClient {
     /**
      * Creates a Keycloak user without password and triggers the UPDATE_PASSWORD action email.
      * Used for self-registration flow where user sets their own password via Keycloak email.
+     * <p>
+     * {@code /api/users/register} now requires the {@code INTERNAL_SERVICE} realm role, so this
+     * call goes through {@code internalServiceRestClient}, which attaches a client-credentials
+     * token for the "internal" registration (client {@code internal-client}).
      *
      * @param email     User's email (also used as username)
      * @param username  Username
@@ -61,8 +84,9 @@ public class KeycloakAdminClient {
                 "sendPasswordEmail", true
         );
 
-        return restClient.post()
+        return internalServiceRestClient.post()
                 .uri(adminServiceUrl + "/users/register")
+                .attributes(RequestAttributeClientRegistrationIdResolver.clientRegistrationId("internal"))
                 .body(request)
                 .retrieve()
                 .body(String.class);
