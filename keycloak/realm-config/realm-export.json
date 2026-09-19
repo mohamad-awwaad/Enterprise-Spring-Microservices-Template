@@ -31,6 +31,9 @@
       "redirectUris": [
         "http://localhost:8081/login/oauth2/code/keycloak"
       ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:4200/*"
+      },
       "publicClient": false,
       "protocol": "openid-connect",
       "directAccessGrantsEnabled": true,

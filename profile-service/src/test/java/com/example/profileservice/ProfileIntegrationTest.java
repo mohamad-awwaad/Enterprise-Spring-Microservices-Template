@@ -13,7 +13,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.junit.jupiter.api.AfterAll;
@@ -37,7 +37,7 @@ class ProfileIntegrationTest {
 
         @Container
         @ServiceConnection
-        static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+        static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16");
 
         @AfterAll
         static void tearDown(@Autowired DataSource dataSource) {

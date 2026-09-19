@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Observability Infrastructure
 # Run after keycloak/docker-compose.yml to use shared network
 

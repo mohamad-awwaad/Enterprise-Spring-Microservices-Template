@@ -187,7 +187,7 @@ common-core (zero dependencies)
                     └── Used by: Profile Service, Order Service, Keycloak Admin
 ```
 
-> **Note:** Gateway is standalone (Spring Boot 3.x) and doesn't use shared libraries.
+> **Note:** Gateway shares the parent POM but doesn't use the common-* shared libraries, since those are servlet-based and the Gateway runs on WebFlux.
 
 ---
 
@@ -201,7 +201,7 @@ common-core (zero dependencies)
 | **Profile Service** | 8082 | Spring Boot 4.x                | User profile CRUD                          |
 | **Order Service**   | 8083 | Spring Boot 4.x                | Order management                           |
 | **Keycloak Admin**  | 8084 | Spring Boot 4.x                | User provisioning proxy                    |
-| **Keycloak**        | 8080 | Keycloak 24.x                  | Identity Provider                          |
+| **Keycloak**        | 8080 | Keycloak 26.x                  | Identity Provider                          |
 | **PostgreSQL**      | 5433 | PostgreSQL 16                  | Application data                           |
 | **PostgreSQL**      | 5432 | PostgreSQL 16                  | Keycloak data                              |
 | **Redis**           | 6379 | Redis 7                        | BFF session storage, rate limiting         |
@@ -210,7 +210,7 @@ common-core (zero dependencies)
 | **Loki**            | 3100 | Loki 3.0                       | Log aggregation                            |
 | **Grafana**         | 3000 | Grafana 11.0                   | Metrics & logs visualization               |
 
-> **Note on Gateway Stack:** The API Gateway runs on **Spring Boot 3.5.x (WebFlux)** instead of 4.x (MVC). This is a deliberate architectural choice to enable the built-in **Redis RequestRateLimiter**, which relies on the non-blocking Reactive stack. Upgrading the Gateway to MVC/Servlet stack would require a custom rate-limiting implementation.
+> **Note on Gateway Stack:** The API Gateway runs on **Spring Cloud Gateway Server WebFlux** (Spring Boot 4.x) while the other services use MVC. It was originally chosen for the built-in **Redis `RequestRateLimiter`**, which relies on the Reactive stack. Spring Cloud Gateway Server MVC now offers an equivalent distributed `RateLimiter` filter (Bucket4j with a Redis-backed `ProxyManager`), so migrating the Gateway to the servlet stack is a possible future consolidation rather than a blocker.
 
 ---
 
@@ -518,9 +518,9 @@ npm test                       # Run tests
 |---------------|------------------------------------------------------|
 | Frontend      | Angular 21, Angular Material, RxJS, Signals          |
 | BFF           | Spring Boot 4.x (MVC), Spring Security OAuth2 Client |
-| Gateway       | Spring Cloud Gateway WebFlux (Spring Boot 3.x)       |
+| Gateway       | Spring Cloud Gateway WebFlux (Spring Boot 4.x)       |
 | Services      | Spring Boot 4.x (MVC), Spring Data JPA               |
-| Identity      | Keycloak 24.x                                        |
+| Identity      | Keycloak 26.x                                        |
 | Database      | PostgreSQL 16                                        |
 | Cache         | Redis 7                                              |
 | Tracing       | Micrometer Tracing, Zipkin 3                         |
