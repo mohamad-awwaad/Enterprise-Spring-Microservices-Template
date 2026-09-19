@@ -21,6 +21,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
+        <!-- Boot 4 ships RestClient auto-configuration (RestClient.Builder bean, spring.http.clients.*
+             timeouts, observation) in its own module; spring-boot-starter-web no longer includes it. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-restclient</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
@@ -41,9 +47,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
         </dependency>
+        <!-- Redis-backed HTTP session (JSESSIONID: OAuth2 login state + OIDC identity). Boot 4 moved the
+             Spring Session auto-configuration into spring-boot-session-data-redis, so the plain
+             spring-session-data-redis dependency alone leaves sessions in Tomcat memory. -->
         <dependency>
-            <groupId>org.springframework.session</groupId>
-            <artifactId>spring-session-data-redis</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-session-data-redis</artifactId>
         </dependency>
         <dependency>
             <groupId>com.nimbusds</groupId>

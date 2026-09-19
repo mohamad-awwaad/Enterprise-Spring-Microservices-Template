@@ -28,15 +28,37 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
-
-        <!-- Distributed Tracing -->
+        <!--
+             GlobalExceptionHandler rethrows AccessDeniedException/AuthenticationException so
+             Spring Security's own filter chain can translate them to 403/401. "provided"
+             because every service that pulls in common-web already has spring-security-core
+             at runtime (transitively via spring-boot-starter-security or
+             spring-boot-starter-oauth2-resource-server), so we only need it here at
+             compile/test time, not as an extra runtime dependency of common-web itself.
+        -->
         <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-core</artifactId>
+            <scope>provided</scope>
         </dependency>
+        <!--
+             GlobalExceptionHandler maps org.springframework.dao.DataIntegrityViolationException
+             (defined in spring-tx) to 409. Compile scope on purpose: Spring resolves the classes
+             named in @ExceptionHandler when the advice bean starts, so every consumer of common-web
+             must have spring-tx on its classpath, including services without a persistence layer.
+        -->
         <dependency>
-            <groupId>io.zipkin.reporter2</groupId>
-            <artifactId>zipkin-reporter-brave</artifactId>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-tx</artifactId>
+        </dependency>
+
+        <!-- Distributed Tracing. Boot 4 moved the Micrometer Tracing / Zipkin auto-configuration into
+             dedicated modules; this starter brings them plus the Brave bridge and the Zipkin reporter.
+             The bare micrometer-tracing-bridge-brave + zipkin-reporter-brave pair (Boot 3 style) no
+             longer activates tracing on its own. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-zipkin</artifactId>
         </dependency>
 
         <!-- Structured Logging -->

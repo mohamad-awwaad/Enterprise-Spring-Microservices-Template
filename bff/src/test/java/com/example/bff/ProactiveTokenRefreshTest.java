@@ -57,7 +57,7 @@ class ProactiveTokenRefreshTest {
     void shouldRefreshExpiredToken() throws Exception {
         // 1. Setup Request
         MockHttpServletRequest request = new MockHttpServletRequest();
-        request.setRequestURI("/api/orders");
+        request.setRequestURI("/bff/api/orders");
         request.setCookies(new Cookie("BFF_SESSION", "mock.jwt.token"));
         MockHttpServletResponse response = new MockHttpServletResponse();
         FilterChain filterChain = mock(FilterChain.class);
@@ -106,6 +106,70 @@ class ProactiveTokenRefreshTest {
         assertEquals("new-refresh-token", savedClient.getRefreshToken().getTokenValue());
         
         // Verify Chain continued
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    void shouldNotTriggerRefreshForNonProxyPath() throws Exception {
+        // Regression test for the prefix bug: the filter must only look at "/bff/api/**"
+        // requests. A request to a non-proxy BFF endpoint (e.g. /bff/user, handled by
+        // Spring Security's own OAuth2 session) must never reach Keycloak.
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/bff/user");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain filterChain = mock(FilterChain.class);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertEquals(0, mockWebServer.getRequestCount());
+        verifyNoInteractions(sessionService, jwtUtils);
+        verify(filterChain).doFilter(request, response);
+    }
+
+    @Test
+    void shouldDeleteSessionWhenRefreshTokenRejectedByKeycloak() throws Exception {
+        // 1. Setup Request
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/bff/api/orders");
+        request.setCookies(new Cookie("BFF_SESSION", "mock.jwt.token"));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain filterChain = mock(FilterChain.class);
+
+        // 2. Mock JWT Extraction
+        when(jwtUtils.extractJti(anyString())).thenReturn("mock-jti");
+
+        // 3. Mock Redis - Return client with expiring token
+        ClientRegistration reg = ClientRegistration.withRegistrationId("keycloak")
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .clientId("bff-client")
+                .clientSecret("secret")
+                .redirectUri("{baseUrl}/login/code")
+                .authorizationUri("http://auth")
+                .tokenUri(mockWebServer.url("/token").toString())
+                .build();
+
+        Instant expiresAt = Instant.now().plusSeconds(30);
+        OAuth2AccessToken accessToken = new OAuth2AccessToken(
+                OAuth2AccessToken.TokenType.BEARER, "old-token", Instant.now(), expiresAt);
+        OAuth2RefreshToken refreshToken = new OAuth2RefreshToken("revoked-refresh-token", Instant.now());
+
+        OAuth2AuthorizedClient authorizedClient = new OAuth2AuthorizedClient(reg, "user", accessToken, refreshToken);
+        when(sessionService.load("mock-jti")).thenReturn(authorizedClient);
+
+        // 4. Mock Keycloak rejecting the refresh (e.g. invalid_grant: refresh token revoked/expired)
+        mockWebServer.enqueue(new MockResponse()
+                .setResponseCode(400)
+                .setBody("{\"error\":\"invalid_grant\",\"error_description\":\"Token is not active\"}")
+                .addHeader("Content-Type", "application/json"));
+
+        // 5. Execute Filter
+        filter.doFilter(request, response, filterChain);
+
+        // 6. Verify the dead session was deleted instead of being saved with a still-dead token
+        verify(sessionService).delete("mock-jti");
+        verify(sessionService, never()).save(anyString(), any());
+
+        // 7. Verify the chain still continued so the proxy handles the now-missing session (401)
         verify(filterChain).doFilter(request, response);
     }
 }

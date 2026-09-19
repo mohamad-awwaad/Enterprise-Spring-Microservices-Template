@@ -35,14 +35,13 @@
             <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
         </dependency>
 
-        <!-- Distributed Tracing -->
+        <!-- Distributed Tracing. Boot 4 moved the Micrometer Tracing / Zipkin auto-configuration into
+             dedicated modules; this starter brings them plus the Brave bridge and the Zipkin reporter.
+             The bare micrometer-tracing-bridge-brave + zipkin-reporter-brave pair (Boot 3 style) no
+             longer activates tracing on its own. -->
         <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-tracing-bridge-brave</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.zipkin.reporter2</groupId>
-            <artifactId>zipkin-reporter-brave</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-zipkin</artifactId>
         </dependency>
 
         <!-- Structured Logging -->

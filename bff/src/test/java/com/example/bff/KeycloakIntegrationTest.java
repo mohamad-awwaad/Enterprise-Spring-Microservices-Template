@@ -21,6 +21,7 @@ import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
+import org.springframework.http.ResponseCookie;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -40,6 +41,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KeycloakIntegrationTest {
 
     private static final Logger log = LoggerFactory.getLogger(KeycloakIntegrationTest.class);
+
+    // CSRF protection is enabled in all profiles (see SecurityConfig's SPA recipe), so write
+    // requests must echo the token back as both a cookie and this header - exactly what
+    // Angular's built-in XSRF interceptor does for real browser requests.
+    private static final String CSRF_COOKIE_NAME = "XSRF-TOKEN";
+    private static final String CSRF_HEADER_NAME = "X-XSRF-TOKEN";
 
     @LocalServerPort
     private int port;
@@ -65,14 +72,36 @@ class KeycloakIntegrationTest {
         try {
             log.debug("Attempting to clean up existing profile before test...");
             String sessionJwt = obtainSessionJwt();
-            // We use exchange() and don't assert status because a 404 is perfectly fine 
+            String csrfToken = obtainCsrfToken(sessionJwt);
+            // We use exchange() and don't assert status because a 404 is perfectly fine
             // (it just means there was no leftover data to clean up).
             webTestClient.delete().uri("/bff/api/profile")
                     .cookie(SessionConstants.COOKIE_BFF_SESSION, sessionJwt)
+                    .cookie(CSRF_COOKIE_NAME, csrfToken)
+                    .header(CSRF_HEADER_NAME, csrfToken)
                     .exchange();
         } catch (Exception e) {
             log.warn("Pre-test cleanup skipped: {}. This is normal if the profile service or Keycloak are not yet reachable, or if no profile exists.", e.getMessage());
         }
+    }
+
+    /**
+     * Obtains a fresh CSRF token by issuing a GET request (a "safe" method that CsrfFilter
+     * never rejects) with a valid session. CsrfCookieFilter forces the token to resolve on
+     * every request, so the XSRF-TOKEN cookie comes back on this response even though GET
+     * itself doesn't require CSRF protection.
+     */
+    private String obtainCsrfToken(String sessionJwt) {
+        var result = webTestClient.get().uri("/bff/api/profile")
+                .cookie(SessionConstants.COOKIE_BFF_SESSION, sessionJwt)
+                .exchange()
+                .returnResult(Void.class);
+
+        ResponseCookie csrfCookie = result.getResponseCookies().getFirst(CSRF_COOKIE_NAME);
+        assertThat(csrfCookie)
+                .as("%s cookie must be set once a session exists", CSRF_COOKIE_NAME)
+                .isNotNull();
+        return csrfCookie.getValue();
     }
 
     private String obtainSessionJwt() {
@@ -145,6 +174,11 @@ class KeycloakIntegrationTest {
         // 1. Obtain Session JWT
         String sessionJwt = obtainSessionJwt();
 
+        // 1b. Obtain a CSRF token up front (via a GET, a safe method) - POST/DELETE below need
+        // to present it as both a cookie and the X-XSRF-TOKEN header now that CSRF protection
+        // is enabled in all profiles.
+        String csrfToken = obtainCsrfToken(sessionJwt);
+
         // 2. Perform Request: Create Profile (POST)
         Map<String, Object> profileData = Map.of(
             "firstName", "Integration",
@@ -156,6 +190,8 @@ class KeycloakIntegrationTest {
 
         webTestClient.post().uri("/bff/api/profile")
                 .cookie(SessionConstants.COOKIE_BFF_SESSION, sessionJwt)
+                .cookie(CSRF_COOKIE_NAME, csrfToken)
+                .header(CSRF_HEADER_NAME, csrfToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(profileData)
                 .exchange()
@@ -183,6 +219,8 @@ class KeycloakIntegrationTest {
         // 5. Perform Request: Delete Profile (DELETE)
         webTestClient.delete().uri("/bff/api/profile")
                 .cookie(SessionConstants.COOKIE_BFF_SESSION, sessionJwt)
+                .cookie(CSRF_COOKIE_NAME, csrfToken)
+                .header(CSRF_HEADER_NAME, csrfToken)
                 .exchange()
                 .expectStatus().isNoContent();
 

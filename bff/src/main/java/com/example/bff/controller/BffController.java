@@ -3,9 +3,11 @@ package com.example.bff.controller;
 import com.example.common.core.constant.SessionConstants;
 import com.example.bff.service.SessionRedisService;
 import com.example.bff.util.JwtUtils;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
@@ -14,6 +16,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -25,6 +28,7 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
@@ -56,15 +60,36 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/bff")
-@RequiredArgsConstructor
 @Slf4j
 public class BffController {
 
     private final OAuth2AuthorizedClientService clientService;
     private final SessionRedisService sessionService;
     private final JwtUtils jwtUtils;
-    private final RestClient.Builder restClientBuilder;
+    private final RestClient restClient;
+    private final CircuitBreaker gatewayCircuitBreaker;
     private final Environment env;
+
+    /**
+     * {@code RestClient.Builder} is a prototype-scoped bean (a fresh, pre-configured builder
+     * per injection point), not a singleton to be re-built from on every request. Building the
+     * client once here - instead of calling {@code restClientBuilder.build()} per proxy call -
+     * means we keep Boot's auto-configured builder (Micrometer observation/trace propagation,
+     * {@code spring.http.clients.*} timeouts) instead of discarding it on every request.
+     */
+    public BffController(OAuth2AuthorizedClientService clientService,
+                          SessionRedisService sessionService,
+                          JwtUtils jwtUtils,
+                          RestClient.Builder restClientBuilder,
+                          CircuitBreakerRegistry circuitBreakerRegistry,
+                          Environment env) {
+        this.clientService = clientService;
+        this.sessionService = sessionService;
+        this.jwtUtils = jwtUtils;
+        this.restClient = restClientBuilder.build();
+        this.gatewayCircuitBreaker = circuitBreakerRegistry.circuitBreaker("gateway");
+        this.env = env;
+    }
 
     @Value("${bff.gateway.url}")
     private String gatewayUrl;
@@ -260,30 +285,7 @@ public class BffController {
 
         log.debug("Proxying request to: {}", targetUri);
 
-        RestClient rc = restClientBuilder.build();
-
-        try {
-            return rc.method(HttpMethod.valueOf(request.getMethod()))
-                    .uri(targetUri)
-                    .headers(h -> {
-                        h.setBearerAuth(accessToken);
-                        // Forward Content-Type header (critical for POST/PUT requests with bodies)
-                        // so the downstream service knows how to parse the payload (e.g., application/json).
-                        if (request.getContentType() != null) {
-                            h.setContentType(MediaType.parseMediaType(request.getContentType()));
-                        }
-                    })
-                    .body(body != null ? body : new byte[0])
-                    .retrieve()
-                    .toEntity(byte[].class);
-        } catch (HttpClientErrorException | HttpServerErrorException e) {
-            log.error("Proxy request failed. Target: {}, Status: {}, Body: {}", targetUri, e.getStatusCode(), e.getResponseBodyAsString());
-            return ResponseEntity.status(e.getStatusCode())
-                    .body(e.getResponseBodyAsByteArray());
-        } catch (Exception e) {
-            log.error("Unexpected error during proxy request to {}", targetUri, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        return proxyToGateway(request, targetUri, body, accessToken);
     }
 
     /**
@@ -314,27 +316,101 @@ public class BffController {
 
         log.debug("Proxying public request to: {}", targetUri);
 
-        RestClient rc = restClientBuilder.build();
+        return proxyToGateway(request, targetUri, body, null);
+    }
 
+    /**
+     * Executes a proxied call to the Gateway through the {@code gateway} circuit breaker and
+     * translates the outcome into the response the BFF sends back to the browser.
+     * <p>
+     * This is the single call site shared by {@link #proxyRequest} and
+     * {@link #proxyPublicRequest} so the circuit breaker wraps one place instead of being
+     * duplicated. Only infrastructure failures (5xx, connection errors, timeouts) count
+     * towards the breaker's failure rate: {@code HttpClientErrorException} (4xx) is listed in
+     * {@code resilience4j.circuitbreaker.instances.gateway.ignoreExceptions}, so it passes
+     * through the breaker untouched and unrecorded - a 404 or 409 from a healthy downstream
+     * service is a normal application response, not a sign the gateway is unavailable.
+     *
+     * @param request     the incoming servlet request (forwards method + a few headers)
+     * @param targetUri   the resolved Gateway URI
+     * @param body        the raw request body to forward (may be null for bodyless requests)
+     * @param bearerToken the access token to forward as {@code Authorization: Bearer ...},
+     *                    or {@code null} for unauthenticated public requests
+     */
+    private ResponseEntity<?> proxyToGateway(HttpServletRequest request, URI targetUri, byte[] body, String bearerToken) {
         try {
-            return rc.method(HttpMethod.valueOf(request.getMethod()))
-                    .uri(targetUri)
-                    .headers(h -> {
-                        if (request.getContentType() != null) {
-                            h.setContentType(MediaType.parseMediaType(request.getContentType()));
-                        }
-                    })
-                    .body(body != null ? body : new byte[0])
-                    .retrieve()
-                    .toEntity(byte[].class);
+            return gatewayCircuitBreaker.executeSupplier(() -> callGateway(request, targetUri, body, bearerToken));
         } catch (HttpClientErrorException | HttpServerErrorException e) {
-            log.error("Public proxy request failed. Target: {}, Status: {}, Body: {}", targetUri, e.getStatusCode(), e.getResponseBodyAsString());
+            log.error("Proxy request failed. Target: {}, Status: {}, Body: {}", targetUri, e.getStatusCode(), e.getResponseBodyAsString());
             return ResponseEntity.status(e.getStatusCode())
                     .body(e.getResponseBodyAsByteArray());
+        } catch (CallNotPermittedException e) {
+            // Circuit is OPEN: the gateway has been failing repeatedly, so fail fast instead
+            // of piling on more timeouts against an already-struggling downstream.
+            log.warn("Circuit breaker 'gateway' is OPEN; short-circuiting request to {}", targetUri);
+            ProblemDetail problemDetail = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
+            problemDetail.setTitle("Service Unavailable");
+            problemDetail.setDetail("Gateway is temporarily unavailable");
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(problemDetail);
+        } catch (ResourceAccessException e) {
+            // Connection refused / timeout while the circuit is still CLOSED (or HALF_OPEN):
+            // the gateway itself is unreachable, which is a 502 from the caller's point of view,
+            // not an internal BFF error. These calls count towards opening the breaker.
+            log.error("Gateway unreachable for {}: {}", targetUri, e.getMessage());
+            ProblemDetail problemDetail = ProblemDetail.forStatus(HttpStatus.BAD_GATEWAY);
+            problemDetail.setTitle("Bad Gateway");
+            problemDetail.setDetail("Gateway is unreachable");
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(problemDetail);
         } catch (Exception e) {
-            log.error("Unexpected error during public proxy request to {}", targetUri, e);
+            log.error("Unexpected error during proxy request to {}", targetUri, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
+    }
+
+    private ResponseEntity<byte[]> callGateway(HttpServletRequest request, URI targetUri, byte[] body, String bearerToken) {
+        ResponseEntity<byte[]> downstreamResponse = restClient.method(HttpMethod.valueOf(request.getMethod()))
+                .uri(targetUri)
+                .headers(h -> {
+                    if (bearerToken != null) {
+                        h.setBearerAuth(bearerToken);
+                    }
+                    // Forward Content-Type header (critical for POST/PUT requests with bodies)
+                    // so the downstream service knows how to parse the payload (e.g., application/json).
+                    if (request.getContentType() != null) {
+                        h.setContentType(MediaType.parseMediaType(request.getContentType()));
+                    }
+                    // Forward content-negotiation headers so downstream error bodies and
+                    // localized messages match what the caller actually asked for.
+                    if (request.getHeader(HttpHeaders.ACCEPT) != null) {
+                        h.set(HttpHeaders.ACCEPT, request.getHeader(HttpHeaders.ACCEPT));
+                    }
+                    if (request.getHeader(HttpHeaders.ACCEPT_LANGUAGE) != null) {
+                        h.set(HttpHeaders.ACCEPT_LANGUAGE, request.getHeader(HttpHeaders.ACCEPT_LANGUAGE));
+                    }
+                })
+                .body(body != null ? body : new byte[0])
+                .retrieve()
+                .toEntity(byte[].class);
+
+        return ResponseEntity.status(downstreamResponse.getStatusCode())
+                .headers(stripHopByHopHeaders(downstreamResponse.getHeaders()))
+                .body(downstreamResponse.getBody());
+    }
+
+    /**
+     * Copies downstream response headers for forwarding, dropping hop-by-hop / framing headers
+     * that must not be relayed verbatim: {@code Transfer-Encoding}/{@code Connection}/
+     * {@code Keep-Alive} are per-connection only, and {@code Content-Length} is recomputed by
+     * Tomcat for the response body we actually write here.
+     */
+    private static HttpHeaders stripHopByHopHeaders(HttpHeaders downstreamHeaders) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.addAll(downstreamHeaders);
+        headers.remove(HttpHeaders.TRANSFER_ENCODING);
+        headers.remove(HttpHeaders.CONNECTION);
+        headers.remove("Keep-Alive");
+        headers.remove(HttpHeaders.CONTENT_LENGTH);
+        return headers;
     }
 
     /**

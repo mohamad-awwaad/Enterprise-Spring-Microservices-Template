@@ -1,23 +1,32 @@
 package com.example.profileservice.service;
 
 import com.example.profileservice.dto.UserRegistrationDTO;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 @Service
-@RequiredArgsConstructor
 public class KeycloakAdminClient {
 
-    private final RestClient.Builder restClientBuilder;
+    private final RestClient restClient;
 
     @Value("${keycloak.admin-service.url}")
     private String adminServiceUrl;
 
+    /**
+     * {@code RestClient.Builder} is a prototype-scoped bean (a fresh, pre-configured builder
+     * per injection point). Building the client once here - rather than calling
+     * {@code restClientBuilder.build()} on every request - keeps Boot's auto-configured
+     * builder (Micrometer observation/trace propagation, {@code spring.http.clients.*}
+     * timeouts) instead of discarding it each time.
+     */
+    public KeycloakAdminClient(RestClient.Builder restClientBuilder) {
+        this.restClient = restClientBuilder.build();
+    }
+
     public String createUser(UserRegistrationDTO dto, String bearerToken) {
-        return restClientBuilder.build().post()
+        return restClient.post()
                 .uri(adminServiceUrl + "/users")
                 .header(HttpHeaders.AUTHORIZATION, bearerToken)
                 .body(dto)
@@ -26,7 +35,7 @@ public class KeycloakAdminClient {
     }
 
     public void deleteUser(String userId, String bearerToken) {
-        restClientBuilder.build().delete()
+        restClient.delete()
                 .uri(adminServiceUrl + "/users/" + userId)
                 .header(HttpHeaders.AUTHORIZATION, bearerToken)
                 .retrieve()
@@ -52,7 +61,7 @@ public class KeycloakAdminClient {
                 "sendPasswordEmail", true
         );
 
-        return restClientBuilder.build().post()
+        return restClient.post()
                 .uri(adminServiceUrl + "/users/register")
                 .body(request)
                 .retrieve()

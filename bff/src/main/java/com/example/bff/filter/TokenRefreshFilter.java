@@ -17,6 +17,7 @@ import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -49,6 +50,13 @@ import java.util.Map;
 @Slf4j
 public class TokenRefreshFilter extends OncePerRequestFilter {
 
+    /**
+     * The BffController proxy endpoints are mapped at "/bff" + "/api/**", so the real
+     * request URI is "/bff/api/...", not "/api/...". Using the wrong prefix here means
+     * this filter silently never runs on proxied requests.
+     */
+    private static final String API_PATH_PREFIX = "/bff/api/";
+
     private final long refreshBufferSeconds;
     private final SessionRedisService sessionService;
     private final JwtUtils jwtUtils;
@@ -70,7 +78,7 @@ public class TokenRefreshFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         // Only apply to API requests where we act as a proxy
-        if (!request.getRequestURI().startsWith("/api/")) {
+        if (!request.getRequestURI().startsWith(API_PATH_PREFIX)) {
             filterChain.doFilter(request, response);
             return;
         }
@@ -116,6 +124,13 @@ public class TokenRefreshFilter extends OncePerRequestFilter {
                 try {
                     // 5. Execute Manual Refresh via Keycloak
                     refreshTokens(client, jti);
+                } catch (HttpClientErrorException e) {
+                    // Keycloak rejected the refresh (e.g. invalid_grant because the refresh
+                    // token was revoked or expired). The stored session can never be refreshed
+                    // again, so delete it now: the proxy will then return 401 for this and any
+                    // subsequent request instead of forwarding a dead access token downstream.
+                    log.warn("Proactive Token Refresh rejected by Keycloak for jti={}, deleting session: {}", jti, e.getMessage());
+                    sessionService.delete(jti);
                 } catch (Exception e) {
                     log.error("Proactive Token Refresh failed: {}", e.getMessage());
                     // We continue the chain; the downstream service will likely return 401 if it's truly expired.

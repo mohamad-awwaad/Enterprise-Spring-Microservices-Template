@@ -30,7 +30,7 @@ A production-ready secure microservices template using **Spring Boot 4.x**, **Ke
 - **Distributed Tracing** - Micrometer Tracing with Zipkin for end-to-end request visibility
 - **Centralized Logging** - Structured JSON logs with Loki aggregation and Grafana visualization
 - **Prometheus Metrics** - JVM, HTTP, and circuit breaker metrics with Grafana dashboards
-- **Robust API Error Handling** - Jakarta Validation on DTOs with standardized [RFC 7807 Problem Details](https://datatracker.ietf.org/doc/html/rfc7807) responses.
+- **Robust API Error Handling** - Jakarta Validation on DTOs with standardized [RFC 9457 (formerly 7807) Problem Details](https://datatracker.ietf.org/doc/html/rfc9457) responses.
 - **OpenAPI Documentation** - Swagger UI with Gateway aggregation
 - **Angular 21 UI** - Modern standalone components with Angular Material
 - **Keycloak Integration** - Enterprise identity provider with user management
@@ -363,6 +363,13 @@ X-Requested-With: XMLHttpRequest
 *   **Browser Navigation:** Redirects to Keycloak Login.
 *   **AJAX (with Header):** Returns `401 Unauthorized`. The Angular `AuthInterceptor` detects this and redirects the user to login programmatically.
 
+### CSRF Protection
+The BFF enables CSRF protection in **all** profiles using Spring Security's SPA recipe: every response carries a readable `XSRF-TOKEN` cookie, and every state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`) to a cookie-authenticated endpoint must echo it back in the `X-XSRF-TOKEN` header, otherwise the BFF answers `403`.
+
+*   Angular's `HttpClient` does this automatically for relative URLs (`/bff/...`), so no frontend code is needed.
+*   Public endpoints (`/bff/public/**`) are exempt: they carry no session cookie, so there is nothing to forge.
+*   Other HTTP clients (tests, curl) must first `GET` any BFF endpoint to receive the cookie, then send both the cookie and the header.
+
 ### Single Sign-Out (SLO)
 A single request to `/bff/logout` performs a comprehensive sign-out across all layers:
 1.  **Local & Session Cleanup:** Deletes the Redis session, invalidates the `JSESSIONID`, and clears both `BFF_SESSION` and `JSESSIONID` cookies.
@@ -465,9 +472,9 @@ curl -X POST http://localhost:8080/realms/my-realm/protocol/openid-connect/token
 curl -H "Authorization: Bearer <TOKEN>" http://localhost:8888/profile
 ```
 
-### Error Responses (RFC 7807)
+### Error Responses (RFC 9457, formerly RFC 7807)
 
-All API errors return standardized [Problem Details](https://datatracker.ietf.org/doc/html/rfc7807) format:
+All API errors return standardized [Problem Details](https://datatracker.ietf.org/doc/html/rfc9457) format:
 
 ```json
 {
@@ -486,7 +493,9 @@ All API errors return standardized [Problem Details](https://datatracker.ietf.or
 |--------|------------------------|---------------------------------------------------|
 | 400    | Input Validation Error | Request body fails DTO validation                 |
 | 401    | Unauthorized           | Missing or invalid JWT                            |
+| 403    | Forbidden              | Authenticated but lacks the required role/authority |
 | 404    | Not Found              | Resource doesn't exist                            |
+| 405    | Method Not Allowed     | HTTP method not supported for the endpoint        |
 | 409    | Conflict               | Resource already exists (e.g., duplicate profile) |
 | 500    | Internal Server Error  | Unexpected server error (sanitized in production) |
 

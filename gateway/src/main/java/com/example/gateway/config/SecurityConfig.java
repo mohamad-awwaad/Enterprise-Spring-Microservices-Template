@@ -30,7 +30,10 @@ public class SecurityConfig {
                 // Allow public endpoints and Swagger UI resources
                 // Pattern: /*/public/** matches service-prefixed public paths like:
                 //   /profile/public/register, /profile/public/api-docs, /orders/public/api-docs
-                .pathMatchers("/*/public/**", "/actuator/health", "/webjars/swagger-ui/**", "/v3/api-docs/**", "/fallback").permitAll()
+                // "/actuator/prometheus" is permitted so Prometheus can scrape metrics without a
+                // token; a dedicated management.server.port (separate from the app port, not
+                // internet-routable) is the production-grade alternative.
+                .pathMatchers("/*/public/**", "/actuator/health", "/actuator/prometheus", "/webjars/swagger-ui/**", "/v3/api-docs/**", "/fallback").permitAll()
                 // Require authentication for everything else
                 .anyExchange().authenticated()
             )

@@ -10,7 +10,6 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtGra
 
 import java.util.Collection;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -25,7 +24,12 @@ public class KeycloakJwtAuthenticationConverter implements Converter<Jwt, Abstra
                 defaultGrantedAuthoritiesConverter.convert(jwt).stream(),
                 extractResourceRoles(jwt).stream())
                 .collect(Collectors.toSet());
-        return new JwtAuthenticationToken(jwt, authorities, (String) Objects.requireNonNull(jwt.getClaim("preferred_username")));
+        // Not every token carries "preferred_username" (e.g. client-credentials tokens have no
+        // user at all); falling back to the subject avoids an NPE (and a 500) for those tokens.
+        String principalName = jwt.getClaim("preferred_username") != null
+                ? jwt.getClaim("preferred_username")
+                : jwt.getSubject();
+        return new JwtAuthenticationToken(jwt, authorities, principalName);
     }
 
     private Collection<GrantedAuthority> extractResourceRoles(Jwt jwt) {
@@ -34,6 +38,9 @@ public class KeycloakJwtAuthenticationConverter implements Converter<Jwt, Abstra
             return Set.of();
         }
         Collection<String> roles = (Collection<String>) realmAccess.get("roles");
+        if (roles == null) {
+            return Set.of();
+        }
         return roles.stream()
                 .map(role -> new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()))
                 .collect(Collectors.toSet());
