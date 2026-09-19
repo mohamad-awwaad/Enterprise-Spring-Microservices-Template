@@ -2,8 +2,6 @@ package com.example.profileservice.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.client.AuthorizedClientServiceOAuth2AuthorizedClientManager;
 import org.springframework.security.oauth2.client.InMemoryOAuth2AuthorizedClientService;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientManager;
@@ -19,16 +17,16 @@ import org.springframework.security.oauth2.client.registration.ClientRegistratio
  * {@code ResourceServerSecurityAutoConfiguration}. Public endpoints are
  * configured via {@code security.resource-server.public-endpoints} property.
  * <p>
- * This class only provides service-specific beans like PasswordEncoder and the OAuth2
- * client machinery used to call keycloak-admin-service internally.
+ * This class only provides service-specific beans like the OAuth2 client machinery used
+ * to call keycloak-admin-service internally.
+ * <p>
+ * No longer defines a {@code PasswordEncoder} bean: it existed only to BCrypt-hash the
+ * password on the self-registration DTO, and that field never actually got read back anywhere
+ * (see {@code RegistrationService}) - the public registration flow no longer accepts a password
+ * at all.
  */
 @Configuration
 public class SecurityConfig {
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
 
     /**
      * Backs the "internal" client registration's client-credentials tokens with an in-memory

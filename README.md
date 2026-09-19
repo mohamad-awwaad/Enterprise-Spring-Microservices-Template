@@ -378,7 +378,10 @@ The BFF enables CSRF protection in **all** profiles using Spring Security's SPA 
 *   Other HTTP clients (tests, curl) must first `GET` any BFF endpoint to receive the cookie, then send both the cookie and the header.
 
 ### Single Sign-Out (SLO)
-A single request to `/bff/logout` performs a comprehensive sign-out across all layers:
+A single `POST` to `/bff/logout` performs a comprehensive sign-out across all layers (it is a
+state-changing request, so - unlike a plain link - it requires the CSRF token like any other
+`POST`; see CSRF Protection above and `AuthService.logout()` in Angular for how it submits one via
+a hidden form):
 1.  **Local & Session Cleanup:** Deletes the Redis session, invalidates the `JSESSIONID`, and clears both `BFF_SESSION` and `JSESSIONID` cookies.
 2.  **Identity Provider Logout:** Automatically redirects the browser to Keycloak's logout endpoint to terminate the SSO session, ensuring the user is fully logged out of the IdP.
 
@@ -447,7 +450,7 @@ Response flows back
 | Method | Endpoint           | Description              |
 |--------|--------------------|--------------------------|
 | GET    | `/bff/login`       | Initiate OAuth2 login    |
-| GET    | `/bff/logout`      | Logout and clear session |
+| POST   | `/bff/logout`      | Logout and clear session (CSRF-protected, like any other state-changing request) |
 | GET    | `/bff/user`        | Get current user info    |
 | GET    | `/bff/api/profile` | Get user profile         |
 | POST   | `/bff/api/profile` | Create user profile      |
@@ -459,7 +462,7 @@ Response flows back
 
 | Method | Endpoint                                | Description                |
 |--------|-----------------------------------------|----------------------------|
-| POST   | `/bff/public/profile/register`          | Register new user          |
+| POST   | `/bff/public/profile/register`          | Register new user (email + profile fields only, no username/password; always returns 201 with the same generic message - see [User Registration](docs/user_registration_flow.md)) |
 | GET    | `/bff/public/profile/confirm?token=xxx` | Confirm email registration |
 
 Note: Public endpoints follow the pattern `/bff/public/{service}/{path}` which maps to `/{service}/public/{path}` at the gateway, then to `/api/public/{path}` at the service (simplified routing strips the service name).
@@ -580,6 +583,14 @@ npm test                       # Run tests
 | Mobile Client    | `mobile-client` (public, authorization code + PKCE)               |
 | Test User        | `user` / `password`                                               |
 | Admin Console    | `admin` / `admin`                                                 |
+
+### BFF Session Signing Key
+
+The BFF signs the `BFF_SESSION` JWT with an RSA key from `BFF_JWT_SIGNING_KEY`. In dev/test, when
+that variable is unset, the BFF automatically generates and uses an ephemeral in-memory key at
+startup (logged as a warning) - no setup needed, but sessions won't survive a restart. In
+production (`prod` profile active), the BFF refuses to start unless `BFF_JWT_SIGNING_KEY` is set;
+see `.env.example` for how to generate one.
 
 ---
 

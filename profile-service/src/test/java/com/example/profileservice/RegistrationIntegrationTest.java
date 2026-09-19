@@ -1,6 +1,6 @@
 package com.example.profileservice;
 
-import com.example.profileservice.dto.UserRegistrationDTO;
+import com.example.profileservice.dto.SelfRegistrationRequest;
 import com.example.profileservice.model.Gender;
 import com.example.profileservice.repository.PendingRegistrationEntityRepository;
 import com.example.profileservice.repository.UserProfileEntityRepository;
@@ -82,7 +82,7 @@ class RegistrationIntegrationTest {
 
         @Test
         void testSuccessfulRegistration() {
-                UserRegistrationDTO registration = createValidRegistration("test@example.com");
+                SelfRegistrationRequest registration = createValidRegistration("test@example.com");
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -91,7 +91,7 @@ class RegistrationIntegrationTest {
                                 .expectStatus().isCreated()
                                 .expectBody()
                                 .jsonPath("$.message")
-                                .isEqualTo("Registration successful. Please check your email to confirm.")
+                                .isEqualTo("If this email is not registered yet, a confirmation link has been sent.")
                                 .jsonPath("$.email").isEqualTo("test@example.com");
 
                 // Verify email was sent
@@ -113,7 +113,7 @@ class RegistrationIntegrationTest {
         @Test
         void testSuccessfulConfirmation() {
                 // First register
-                UserRegistrationDTO registration = createValidRegistration("confirm@example.com");
+                SelfRegistrationRequest registration = createValidRegistration("confirm@example.com");
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -151,7 +151,7 @@ class RegistrationIntegrationTest {
 
         @Test
         void testDuplicateEmailRegistration() {
-                UserRegistrationDTO registration = createValidRegistration("duplicate@example.com");
+                SelfRegistrationRequest registration = createValidRegistration("duplicate@example.com");
 
                 // First registration succeeds
                 webTestClient.post().uri("/api/public/register")
@@ -160,31 +160,27 @@ class RegistrationIntegrationTest {
                                 .exchange()
                                 .expectStatus().isCreated();
 
-                // Second registration with same email fails
+                // Second registration for the same email returns the SAME 201 response - the
+                // endpoint must not reveal that the email is already registered (enumeration
+                // prevention, see RegistrationService#register).
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .bodyValue(registration)
                                 .exchange()
-                                .expectStatus().isEqualTo(409)
+                                .expectStatus().isCreated()
                                 .expectBody()
-                                .jsonPath("$.detail").isEqualTo("Email already registered");
+                                .jsonPath("$.message")
+                                .isEqualTo("If this email is not registered yet, a confirmation link has been sent.")
+                                .jsonPath("$.email").isEqualTo("duplicate@example.com");
+
+                // Only the first request actually created anything, and only it sent an email.
+                assertThat(pendingRegistrationRepository.findAll()).hasSize(1);
+                verify(emailService, times(1)).sendConfirmationEmail(eq("duplicate@example.com"), anyString());
         }
 
         @Test
         void testInvalidEmailFormat() {
-                UserRegistrationDTO registration = createValidRegistration("invalid-email");
-
-                webTestClient.post().uri("/api/public/register")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(registration)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-        }
-
-        @Test
-        void testPasswordTooShort() {
-                UserRegistrationDTO registration = createValidRegistration("short@example.com");
-                registration.setPassword("short"); // Less than 8 characters
+                SelfRegistrationRequest registration = createValidRegistration("invalid-email");
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -205,7 +201,7 @@ class RegistrationIntegrationTest {
         @Test
         void testExpiredConfirmationToken() {
                 // First register
-                UserRegistrationDTO registration = createValidRegistration("expired@example.com");
+                SelfRegistrationRequest registration = createValidRegistration("expired@example.com");
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -228,8 +224,8 @@ class RegistrationIntegrationTest {
 
         @Test
         void testMissingRequiredFields() {
-                UserRegistrationDTO registration = new UserRegistrationDTO();
-                // All required fields are missing
+                SelfRegistrationRequest registration = new SelfRegistrationRequest();
+                // Email (the only @NotBlank field) is missing
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -238,11 +234,9 @@ class RegistrationIntegrationTest {
                                 .expectStatus().isBadRequest();
         }
 
-        private UserRegistrationDTO createValidRegistration(String email) {
-                UserRegistrationDTO dto = new UserRegistrationDTO();
-                dto.setUsername("testuser");
+        private SelfRegistrationRequest createValidRegistration(String email) {
+                SelfRegistrationRequest dto = new SelfRegistrationRequest();
                 dto.setEmail(email);
-                dto.setPassword("securePassword123");
                 dto.setFirstName("Test");
                 dto.setLastName("User");
                 dto.setGender(Gender.MALE);

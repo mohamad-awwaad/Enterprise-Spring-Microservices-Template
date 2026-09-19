@@ -1,6 +1,7 @@
 package com.example.bff.controller;
 
 import com.example.bff.service.SessionRedisService;
+import com.example.bff.session.BffSession;
 import com.example.bff.util.JwtUtils;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -11,15 +12,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
-import org.springframework.security.oauth2.client.registration.ClientRegistration;
-import org.springframework.security.oauth2.core.AuthorizationGrantType;
-import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -63,7 +61,7 @@ class BffControllerCircuitBreakerTest {
 
         String sessionJwt = "session.jwt.token";
         when(jwtUtils.extractJti(sessionJwt)).thenReturn("jti");
-        when(sessionService.load("jti")).thenReturn(authorizedClientWithAccessToken("valid-token"));
+        when(sessionService.load("jti")).thenReturn(sessionWithAccessToken("valid-token"));
 
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setMethod("GET");
@@ -78,17 +76,8 @@ class BffControllerCircuitBreakerTest {
         assertThat(problemDetail.getDetail()).isEqualTo("Gateway is temporarily unavailable");
     }
 
-    private static OAuth2AuthorizedClient authorizedClientWithAccessToken(String tokenValue) {
-        ClientRegistration registration = ClientRegistration.withRegistrationId("keycloak")
-                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                .clientId("bff-client")
-                .clientSecret("secret")
-                .redirectUri("{baseUrl}/login/code")
-                .authorizationUri("http://auth")
-                .tokenUri("http://auth/token")
-                .build();
-        OAuth2AccessToken accessToken = new OAuth2AccessToken(
-                OAuth2AccessToken.TokenType.BEARER, tokenValue, Instant.now(), Instant.now().plusSeconds(300));
-        return new OAuth2AuthorizedClient(registration, "user", accessToken);
+    private static BffSession sessionWithAccessToken(String tokenValue) {
+        return new BffSession(
+                "user", tokenValue, Instant.now().plusSeconds(300), "refresh-token", "id-token", Set.of("openid"));
     }
 }

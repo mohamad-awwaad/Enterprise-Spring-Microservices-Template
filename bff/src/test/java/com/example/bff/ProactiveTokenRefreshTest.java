@@ -2,6 +2,7 @@ package com.example.bff;
 
 import com.example.bff.filter.TokenRefreshFilter;
 import com.example.bff.service.SessionRedisService;
+import com.example.bff.session.BffSession;
 import com.example.bff.util.JwtUtils;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.Cookie;
@@ -13,15 +14,15 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
-import org.springframework.security.oauth2.core.OAuth2AccessToken;
-import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
@@ -41,11 +42,24 @@ class ProactiveTokenRefreshTest {
         sessionService = mock(SessionRedisService.class);
         jwtUtils = mock(JwtUtils.class);
 
+        // TokenRefreshFilter no longer reads client id/secret/token URI off the stored
+        // session (BffSession carries no ClientRegistration - see its Javadoc), so it looks
+        // the "keycloak" registration up from a ClientRegistrationRepository instead.
+        ClientRegistration reg = ClientRegistration.withRegistrationId("keycloak")
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .clientId("bff-client")
+                .clientSecret("secret")
+                .redirectUri("{baseUrl}/login/code")
+                .authorizationUri("http://auth")
+                .tokenUri(mockWebServer.url("/token").toString()) // Important!
+                .build();
+        ClientRegistrationRepository clientRegistrationRepository = new InMemoryClientRegistrationRepository(reg);
+
         // Configure RestClient to hit MockWebServer
         RestClient.Builder builder = RestClient.builder().baseUrl(mockWebServer.url("/").toString());
 
         // Use 60 seconds as the refresh buffer (same as default in application.properties)
-        filter = new TokenRefreshFilter(sessionService, jwtUtils, builder, 60L);
+        filter = new TokenRefreshFilter(sessionService, jwtUtils, builder, clientRegistrationRepository, 60L);
     }
 
     @AfterEach
@@ -65,24 +79,12 @@ class ProactiveTokenRefreshTest {
         // 2. Mock JWT Extraction
         when(jwtUtils.extractJti(anyString())).thenReturn("mock-jti");
 
-        // 3. Mock Redis - Return client with expiring token
-        ClientRegistration reg = ClientRegistration.withRegistrationId("keycloak")
-                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                .clientId("bff-client")
-                .clientSecret("secret")
-                .redirectUri("{baseUrl}/login/code")
-                .authorizationUri("http://auth")
-                .tokenUri(mockWebServer.url("/token").toString()) // Important!
-                .build();
-
+        // 3. Mock Redis - Return session with expiring token
         // Expiring in 30 seconds (Condition < 60s)
         Instant expiresAt = Instant.now().plusSeconds(30);
-        OAuth2AccessToken accessToken = new OAuth2AccessToken(
-                OAuth2AccessToken.TokenType.BEARER, "old-token", Instant.now(), expiresAt);
-        OAuth2RefreshToken refreshToken = new OAuth2RefreshToken("refresh-token", Instant.now());
-
-        OAuth2AuthorizedClient authorizedClient = new OAuth2AuthorizedClient(reg, "user", accessToken, refreshToken);
-        when(sessionService.load("mock-jti")).thenReturn(authorizedClient);
+        BffSession session = new BffSession(
+                "user", "old-token", expiresAt, "refresh-token", "id-token-value", Set.of("openid"));
+        when(sessionService.load("mock-jti")).thenReturn(session);
 
         // 4. Mock Keycloak Response
         mockWebServer.enqueue(new MockResponse()
@@ -95,16 +97,18 @@ class ProactiveTokenRefreshTest {
         // 6. Verify Refresh Happened
         // Verify Keycloak was called
         assertEquals(1, mockWebServer.getRequestCount());
-        
+
         // Verify Redis Save was called with NEW token
-        ArgumentCaptor<OAuth2AuthorizedClient> captor = ArgumentCaptor.forClass(OAuth2AuthorizedClient.class);
+        ArgumentCaptor<BffSession> captor = ArgumentCaptor.forClass(BffSession.class);
         verify(sessionService).save(eq("mock-jti"), captor.capture());
-        
-        OAuth2AuthorizedClient savedClient = captor.getValue();
-        assertEquals("new-access-token", savedClient.getAccessToken().getTokenValue());
-        assert savedClient.getRefreshToken() != null;
-        assertEquals("new-refresh-token", savedClient.getRefreshToken().getTokenValue());
-        
+
+        BffSession savedSession = captor.getValue();
+        assertEquals("new-access-token", savedSession.accessToken());
+        assertEquals("new-refresh-token", savedSession.refreshToken());
+        // Fields that aren't part of the refresh response must be carried over unchanged.
+        assertEquals("id-token-value", savedSession.idToken());
+        assertEquals("user", savedSession.principalName());
+
         // Verify Chain continued
         verify(filterChain).doFilter(request, response);
     }
@@ -138,23 +142,11 @@ class ProactiveTokenRefreshTest {
         // 2. Mock JWT Extraction
         when(jwtUtils.extractJti(anyString())).thenReturn("mock-jti");
 
-        // 3. Mock Redis - Return client with expiring token
-        ClientRegistration reg = ClientRegistration.withRegistrationId("keycloak")
-                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                .clientId("bff-client")
-                .clientSecret("secret")
-                .redirectUri("{baseUrl}/login/code")
-                .authorizationUri("http://auth")
-                .tokenUri(mockWebServer.url("/token").toString())
-                .build();
-
+        // 3. Mock Redis - Return session with expiring token
         Instant expiresAt = Instant.now().plusSeconds(30);
-        OAuth2AccessToken accessToken = new OAuth2AccessToken(
-                OAuth2AccessToken.TokenType.BEARER, "old-token", Instant.now(), expiresAt);
-        OAuth2RefreshToken refreshToken = new OAuth2RefreshToken("revoked-refresh-token", Instant.now());
-
-        OAuth2AuthorizedClient authorizedClient = new OAuth2AuthorizedClient(reg, "user", accessToken, refreshToken);
-        when(sessionService.load("mock-jti")).thenReturn(authorizedClient);
+        BffSession session = new BffSession(
+                "user", "old-token", expiresAt, "revoked-refresh-token", "id-token-value", Set.of("openid"));
+        when(sessionService.load("mock-jti")).thenReturn(session);
 
         // 4. Mock Keycloak rejecting the refresh (e.g. invalid_grant: refresh token revoked/expired)
         mockWebServer.enqueue(new MockResponse()

@@ -23,7 +23,7 @@ The registration flow allows new users to create accounts without admin interven
        │                   │                   │                     │                    │
        │                   │                   │     4. Create disabled profile           │
        │                   │                   │     + pending registration               │
-       │                   │                   │     (BCrypt hash password)               │
+       │                   │                   │     (no password collected)              │
        │                   │                   │                     │                    │
        │                   │                   │     5. Send confirmation email           │
        │                   │                   │                     │ ─ ─ ─ ─ ─ ─ ─ ─ >  │
@@ -78,21 +78,45 @@ client registration (`internal-client`) before making the call - see `KeycloakAd
 - Unconfirmed registrations are isolated to our Profile Service database
 - Easy to implement cleanup jobs for expired pending registrations
 
-### 2. Password Handling
+### 2. No Password Collected at Registration
 
-**Decision:** Password is BCrypt-hashed during registration, but the final password is set via Keycloak's "Update Password" email.
+**Decision:** The registration form never asks for a password. The final password is set entirely
+via Keycloak's own "Set Password" email, sent after email confirmation.
 
 **Rationale:**
-- Our services never see the user's actual password
-- The password submitted during registration is only used to verify the user "knows" a password
-- After confirmation, Keycloak sends its own password-setup email
-- This ensures password is set directly with the IdP using their secure flow
+- Our services never see, store, or process the user's password at any point
+- Earlier revisions of this flow collected a password on the form and BCrypt-hashed it into
+  `PendingRegistrationEntity`, but nothing ever read that hash back - it was pure unused
+  overhead (and a value worth protecting for no benefit). It has been removed entirely.
+- Not collecting a password up front also means the user only ever sets it once, directly with
+  the IdP, using Keycloak's own secure flow
 
-**Trade-off:** User sets password twice (registration form + Keycloak email). This could be improved by:
-- Passing the password hash to Keycloak (requires custom Keycloak extension)
-- Not collecting password during registration (poorer UX)
+### 3. No Email Enumeration on Registration
 
-### 3. Confirmation Token Security
+**Decision:** `POST /register` always returns the same `201 Created` response, whether the email
+was free, already registered, or lost a race between a duplicate-check and a concurrent insert:
+
+```json
+{
+  "message": "If this email is not registered yet, a confirmation link has been sent.",
+  "email": "user@example.com"
+}
+```
+
+**Rationale:**
+- Whether a given email already has an account is itself sensitive information: confirming it
+  (e.g. via a `409 Conflict`, as this endpoint used to return) lets an attacker build a list of
+  valid addresses to target with credential stuffing or password-reset abuse.
+- For an already-registered email, nothing is created and no confirmation email is sent -
+  `RegistrationService#register` logs the attempt at INFO for operational visibility, but the
+  HTTP response is indistinguishable from a fresh registration.
+- The rare race (two concurrent requests for the same address both pass the initial existence
+  check) is caught via the database's unique constraint on `user_profiles.email`, surfaced as a
+  `DataIntegrityViolationException` from a dedicated `RegistrationPersistenceService` bean run in
+  its own transaction - see the Javadoc on `RegistrationService#register` for why that split is
+  necessary.
+
+### 4. Confirmation Token Security
 
 **Design:**
 - Token: UUID v4 (122 bits of cryptographic randomness)
@@ -105,7 +129,7 @@ client registration (`internal-client`) before making the call - see `KeycloakAd
 - Time-limited (prevents indefinite validity)
 - Non-reusable (prevents replay attacks)
 
-### 4. Profile Enabled Flag
+### 5. Profile Enabled Flag
 
 **Design:** UserProfile has an `enabled` boolean field (default: false).
 
@@ -123,9 +147,7 @@ POST /bff/public/profile/register
 Content-Type: application/json
 
 {
-  "username": "user@example.com",
   "email": "user@example.com",
-  "password": "SecurePassword123",
   "firstName": "John",
   "lastName": "Doe",
   "mobileNumber": "+1234567890",
@@ -135,10 +157,15 @@ Content-Type: application/json
 
 Response: 201 Created
 {
-  "message": "Registration successful. Please check your email to confirm.",
+  "message": "If this email is not registered yet, a confirmation link has been sent.",
   "email": "user@example.com"
 }
 ```
+
+Note: no `username` or `password` field - email is the username end to end, and the password is
+set only through Keycloak's own "Set Password" email (see Security Design Decision #2 above).
+The response above is returned identically whether or not `email` was already registered - see
+Security Design Decision #3 (no email enumeration).
 
 ### Confirmation Endpoint
 
@@ -186,9 +213,13 @@ Gateway → /api/public/register (to Profile Service)
 | id | BIGINT | PK, FK to UserProfile |
 | confirmation_token | VARCHAR | Unique, UUID v4 |
 | token_expiry | TIMESTAMP | When token becomes invalid |
-| password_hash | VARCHAR | BCrypt-encoded |
 | confirmation_type | VARCHAR | EMAIL or MOBILE |
 | created_at | TIMESTAMP | For cleanup jobs |
+
+No password column: the self-registration flow never collects one (see Security Design Decision
+#2 above). A `password_hash` column may still be present in an existing dev database from before
+this change - `spring.jpa.hibernate.ddl-auto=update` adds/alters columns but never drops them, so
+it simply goes unused rather than being actively removed.
 
 ## Configuration
 
@@ -225,7 +256,7 @@ See `docs/PRODUCTION_CHECKLIST.md` for:
 
 | Error | HTTP Status | Description |
 |-------|-------------|-------------|
-| Email already registered | 409 Conflict | User should use "forgot password" |
+| Email already registered | 201 Created (same generic response) | No longer a distinct error - see Security Design Decision #3 (no email enumeration). User should use "forgot password" if they don't receive a confirmation email they expect. |
 | Invalid token | 400 Bad Request | Token not found |
 | Token expired | 400 Bad Request | Must re-register |
 | Keycloak error | 500 Internal | User creation failed |

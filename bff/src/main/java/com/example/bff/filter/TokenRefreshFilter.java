@@ -1,6 +1,7 @@
 package com.example.bff.filter;
 
 import com.example.bff.service.SessionRedisService;
+import com.example.bff.session.BffSession;
 import com.example.bff.util.JwtUtils;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -11,9 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
-import org.springframework.security.oauth2.core.OAuth2AccessToken;
-import org.springframework.security.oauth2.core.OAuth2RefreshToken;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -57,19 +57,30 @@ public class TokenRefreshFilter extends OncePerRequestFilter {
      */
     private static final String API_PATH_PREFIX = "/bff/api/";
 
+    /**
+     * The registration id used for the Keycloak OAuth2 client, as configured under
+     * {@code spring.security.oauth2.client.registration.keycloak.*} in application.properties.
+     * Sessions no longer carry their own {@code ClientRegistration} (see {@link BffSession}), so
+     * this filter looks the client id/secret/token URI up from the shared repository instead.
+     */
+    private static final String KEYCLOAK_REGISTRATION_ID = "keycloak";
+
     private final long refreshBufferSeconds;
     private final SessionRedisService sessionService;
     private final JwtUtils jwtUtils;
     private final RestClient restClient;
+    private final ClientRegistrationRepository clientRegistrationRepository;
 
     public TokenRefreshFilter(SessionRedisService sessionService,
                               JwtUtils jwtUtils,
                               RestClient.Builder restClientBuilder,
+                              ClientRegistrationRepository clientRegistrationRepository,
                               @org.springframework.beans.factory.annotation.Value("${bff.token.refresh-buffer-seconds}") long refreshBufferSeconds) {
         this.sessionService = sessionService;
         this.jwtUtils = jwtUtils;
         // Using Builder allows us to inject a mock/custom builder in tests
         this.restClient = restClientBuilder.build();
+        this.clientRegistrationRepository = clientRegistrationRepository;
         this.refreshBufferSeconds = refreshBufferSeconds;
     }
 
@@ -108,22 +119,22 @@ public class TokenRefreshFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 3. Load OAuth2 Context from Redis
-        OAuth2AuthorizedClient client = sessionService.load(jti);
-        if (client == null || client.getRefreshToken() == null) {
+        // 3. Load BFF Session from Redis
+        BffSession session = sessionService.load(jti);
+        if (session == null || session.refreshToken() == null) {
             filterChain.doFilter(request, response);
             return;
         }
 
         // 4. Check for Proactive Refresh Condition
-        OAuth2AccessToken accessToken = client.getAccessToken();
-        if (accessToken.getExpiresAt() != null) {
-            long secondsRemaining = accessToken.getExpiresAt().getEpochSecond() - Instant.now().getEpochSecond();
-            
+        Instant accessTokenExpiresAt = session.accessTokenExpiresAt();
+        if (accessTokenExpiresAt != null) {
+            long secondsRemaining = accessTokenExpiresAt.getEpochSecond() - Instant.now().getEpochSecond();
+
             if (secondsRemaining < refreshBufferSeconds) {
                 try {
                     // 5. Execute Manual Refresh via Keycloak
-                    refreshTokens(client, jti);
+                    refreshTokens(session, jti);
                 } catch (HttpClientErrorException e) {
                     // Keycloak rejected the refresh (e.g. invalid_grant because the refresh
                     // token was revoked or expired). The stored session can never be refreshed
@@ -141,15 +152,21 @@ public class TokenRefreshFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private void refreshTokens(OAuth2AuthorizedClient client, String jti) {
+    private void refreshTokens(BffSession session, String jti) {
+        ClientRegistration registration = clientRegistrationRepository.findByRegistrationId(KEYCLOAK_REGISTRATION_ID);
+        if (registration == null) {
+            log.error("No '{}' client registration found; cannot refresh token for jti={}", KEYCLOAK_REGISTRATION_ID, jti);
+            return;
+        }
+
         MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
         formData.add("grant_type", "refresh_token");
-        formData.add("refresh_token", client.getRefreshToken().getTokenValue());
-        formData.add("client_id", client.getClientRegistration().getClientId());
-        formData.add("client_secret", client.getClientRegistration().getClientSecret());
+        formData.add("refresh_token", session.refreshToken());
+        formData.add("client_id", registration.getClientId());
+        formData.add("client_secret", registration.getClientSecret());
 
         Map tokenResponse = restClient.post()
-                .uri(client.getClientRegistration().getProviderDetails().getTokenUri())
+                .uri(registration.getProviderDetails().getTokenUri())
                 .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE)
                 .body(formData)
                 .retrieve()
@@ -159,28 +176,20 @@ public class TokenRefreshFilter extends OncePerRequestFilter {
             String newAccessTokenValue = (String) tokenResponse.get("access_token");
             String newRefreshTokenValue = (String) tokenResponse.get("refresh_token");
             Integer expiresIn = (Integer) tokenResponse.get("expires_in");
-            
+
             Instant newExpiresAt = Instant.now().plusSeconds(expiresIn);
-            
-            OAuth2AccessToken newAccessToken = new OAuth2AccessToken(
-                    OAuth2AccessToken.TokenType.BEARER,
+
+            BffSession updatedSession = new BffSession(
+                    session.principalName(),
                     newAccessTokenValue,
-                    Instant.now(),
                     newExpiresAt,
-                    client.getAccessToken().getScopes());
-            
-            OAuth2RefreshToken newRefreshToken = newRefreshTokenValue != null 
-                    ? new OAuth2RefreshToken(newRefreshTokenValue, Instant.now()) 
-                    : client.getRefreshToken();
+                    // Keycloak doesn't always rotate the refresh token; keep the old one if so.
+                    newRefreshTokenValue != null ? newRefreshTokenValue : session.refreshToken(),
+                    session.idToken(),
+                    session.scopes());
 
-            OAuth2AuthorizedClient updatedClient = new OAuth2AuthorizedClient(
-                    client.getClientRegistration(),
-                    client.getPrincipalName(),
-                    newAccessToken,
-                    newRefreshToken);
-
-            // 6. Save Updated Tokens to Redis
-            sessionService.save(jti, updatedClient);
+            // 6. Save Updated Session to Redis
+            sessionService.save(jti, updatedSession);
         }
     }
 }

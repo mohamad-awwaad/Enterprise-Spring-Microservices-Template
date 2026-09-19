@@ -2,6 +2,7 @@ package com.example.bff.controller;
 
 import com.example.common.core.constant.SessionConstants;
 import com.example.bff.service.SessionRedisService;
+import com.example.bff.session.BffSession;
 import com.example.bff.util.JwtUtils;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -24,6 +25,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.core.OAuth2AccessToken;
+import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.HttpClientErrorException;
@@ -133,8 +136,11 @@ public class BffController {
      * This endpoint is called after Keycloak redirects back with an authorization code
      * and Spring Security exchanges it for tokens. It:
      * <ol>
-     *   <li>Stores the OAuth2 tokens in Redis (keyed by a unique JTI)</li>
-     *   <li>Stores the ID token separately for use during logout</li>
+     *   <li>Copies the token values (and the ID token, for logout) out of Spring Security's
+     *       {@code OAuth2AuthorizedClient} into a {@link BffSession} record, stored in Redis
+     *       keyed by a unique JTI</li>
+     *   <li>Discards the {@code OAuth2AuthorizedClient} from the in-memory
+     *       {@code OAuth2AuthorizedClientService} (see below)</li>
      *   <li>Issues a signed BFF_SESSION JWT cookie containing the JTI</li>
      *   <li>Redirects to the frontend application</li>
      * </ol>
@@ -147,14 +153,33 @@ public class BffController {
         OAuth2AuthorizedClient client = clientService.loadAuthorizedClient(
                 auth.getAuthorizedClientRegistrationId(), auth.getName());
 
-        String jti = UUID.randomUUID().toString();
-        sessionService.save(jti, client);
+        String idTokenValue = auth.getPrincipal() instanceof OidcUser oidcUser
+                ? oidcUser.getIdToken().getTokenValue()
+                : null;
 
-        // Store ID token for Keycloak logout
-        if (auth.getPrincipal() instanceof OidcUser oidcUser) {
-            String idTokenValue = oidcUser.getIdToken().getTokenValue();
-            sessionService.saveIdToken(jti, idTokenValue);
-        }
+        OAuth2AccessToken accessToken = client.getAccessToken();
+        OAuth2RefreshToken refreshToken = client.getRefreshToken();
+        BffSession session = new BffSession(
+                auth.getName(),
+                accessToken.getTokenValue(),
+                accessToken.getExpiresAt(),
+                refreshToken != null ? refreshToken.getTokenValue() : null,
+                idTokenValue,
+                accessToken.getScopes());
+
+        String jti = UUID.randomUUID().toString();
+        sessionService.save(jti, session);
+
+        /*
+         * The in-memory OAuth2AuthorizedClientService keeps every authorized client for the
+         * life of the process, keyed by (registrationId, principalName). Nothing in the BFF
+         * ever reads it again after this point: /bff/user only needs the OidcUser principal
+         * already held in the Spring Session (JSESSIONID), and /bff/api/** reads tokens from
+         * the BffSession record in Redis via the jti. Left in place, this map would grow
+         * without bound as users log in. Removing the entry now - right after copying what we
+         * need into the BffSession - keeps the service's memory footprint bounded.
+         */
+        clientService.removeAuthorizedClient(auth.getAuthorizedClientRegistrationId(), auth.getName());
 
         String sessionJwt = jwtUtils.issueSessionJwt(jti, auth);
 
@@ -188,12 +213,21 @@ public class BffController {
      *   <li>Redirects to Keycloak logout to invalidate the IdP session</li>
      *   <li>Keycloak then redirects back to the frontend login page</li>
      * </ol>
+     * <p>
+     * <b>Why POST:</b> logout mutates state (it invalidates the session server-side), so it must
+     * go through Spring Security's CSRF check like any other state-changing request; it stays
+     * {@code permitAll} for authorization purposes (an expired/missing session must still be able
+     * to reach Keycloak's logout), but it is deliberately left out of the CSRF
+     * {@code ignoringRequestMatchers} list so a cross-site {@code GET} (previously enough to log a
+     * user out, a mild CSRF/DoS nuisance) can no longer trigger it. See
+     * {@code AuthService.logout()} on the Angular side for how it submits the required
+     * {@code _csrf} token as a hidden form field.
      *
      * @param sessionJwt The BFF_SESSION JWT cookie (optional, may be expired/missing)
      * @param request The HTTP request for session access
      * @return Redirect to Keycloak logout endpoint
      */
-    @GetMapping("/logout")
+    @PostMapping("/logout")
     public ResponseEntity<?> logout(
             @CookieValue(name = SessionConstants.COOKIE_BFF_SESSION, required = false) String sessionJwt,
             HttpServletRequest request) {
@@ -204,7 +238,10 @@ public class BffController {
             try {
                 String jti = jwtUtils.extractJti(sessionJwt);
                 if (jti != null) {
-                    idToken = sessionService.loadIdToken(jti);
+                    BffSession session = sessionService.load(jti);
+                    if (session != null) {
+                        idToken = session.idToken();
+                    }
                     sessionService.delete(jti);
                 }
             } catch (Exception e) {
@@ -268,12 +305,12 @@ public class BffController {
             return buildErrorResponse(401, "INVALID_SESSION", "Failed to extract JTI from session JWT");
         }
 
-        OAuth2AuthorizedClient client = sessionService.load(jti);
-        if (client == null) {
+        BffSession session = sessionService.load(jti);
+        if (session == null) {
             return buildErrorResponse(401, "SESSION_NOT_FOUND", "Session not found in Redis (expired or invalid)");
         }
 
-        String accessToken = client.getAccessToken().getTokenValue();
+        String accessToken = session.accessToken();
 
         // Extract the path after "/bff/api"
         // Example: /bff/api/profile -> /profile, /bff/api/profile/foo -> /profile/foo

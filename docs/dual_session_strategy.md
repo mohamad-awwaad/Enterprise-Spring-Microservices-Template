@@ -34,6 +34,44 @@ The `BFF_SESSION` is the "heavy lifter" used for **API Proxying** and **Token Li
 *   **Stateless Proxying:** When a request hits `/bff/api/**`, the `TokenRefreshFilter` extracts the `jti` from the cookie, retrieves the *real* tokens from Redis, and attaches them to the outgoing request to the Gateway.
 *   **Proactive Refresh:** Because the tokens are stored in Redis, the BFF can proactively refresh the Access Token using the Refresh Token *before* forwarding the request, without the browser ever knowing.
 
+#### Storage format: `BffSession`, not `OAuth2AuthorizedClient`
+
+Redis stores a `BffSession` Java record (`bff:session:<jti>`), not Spring Security's
+`OAuth2AuthorizedClient` object:
+
+```java
+record BffSession(
+    String principalName,
+    String accessToken,
+    Instant accessTokenExpiresAt,
+    String refreshToken,
+    String idToken,
+    Set<String> scopes) {}
+```
+
+The record is serialized to plain JSON (Spring Data Redis 4's Jackson-3-backed
+`JacksonJsonRedisSerializer`), not JDK serialization. This matters for three reasons:
+
+*   **No client secret in Redis.** `OAuth2AuthorizedClient` embeds the whole `ClientRegistration`,
+    including the OAuth2 client secret. `BffSession` never carries the registration - only the
+    token values issued to that specific user - so a Redis compromise or an over-broad backup
+    cannot leak the client secret.
+*   **No Java deserialization surface.** JDK-deserializing a value an attacker could influence is
+    a classic RCE vector. A JSON record closes that off; there is nothing to deserialize into
+    arbitrary Java types.
+*   **Decoupled from Spring Security's internals.** `OAuth2AuthorizedClient`'s shape isn't a
+    stable serialization contract across Spring Security versions - a routine upgrade could
+    silently break every session already sitting in Redis. `BffSession` is ours to own and
+    version.
+
+`TokenRefreshFilter` looks the Keycloak client id/secret/token URI up from the
+`ClientRegistrationRepository` (by the `keycloak` registration id) when it needs to call the
+token endpoint, instead of reading them off the (no longer present) `ClientRegistration` that used
+to travel with the stored client.
+
+The `JSESSIONID` session (see above) remains a standard Spring Session, itself backed by Redis via
+`spring-session-data-redis` - it is unaffected by this change.
+
 ---
 
 ## Why use two sessions?
@@ -84,7 +122,9 @@ sequenceDiagram
 
 ## Logout
 
-When `/bff/logout` is called, the system performs a **Full Cleanup**:
+`/bff/logout` is a `POST` endpoint (CSRF-protected like any other state-changing request, since
+it isn't in the CSRF `ignoringRequestMatchers` list - see `SecurityConfig`). When called, the
+system performs a **Full Cleanup**:
 1.  **Redis:** Deletes the session data associated with the `jti`.
 2.  **JSESSIONID:** Invalidate the Spring HTTP session.
 3.  **Cookies:** Clears both `BFF_SESSION` and `JSESSIONID` from the browser.

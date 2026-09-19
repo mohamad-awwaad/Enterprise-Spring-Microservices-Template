@@ -3,6 +3,7 @@ package com.example.bff;
 import com.example.common.core.constant.SessionConstants;
 import com.example.bff.config.TestConfig;
 import com.example.bff.service.SessionRedisService;
+import com.example.bff.session.BffSession;
 import com.example.bff.util.JwtUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,12 +13,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
-import org.springframework.security.oauth2.client.registration.ClientRegistration;
-import org.springframework.security.oauth2.core.AuthorizationGrantType;
-import org.springframework.security.oauth2.core.OAuth2AccessToken;
-import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -32,6 +28,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -133,26 +130,16 @@ class KeycloakIntegrationTest {
 
         // 2. Create Session in Redis manually to simulate logged-in state
         String jti = UUID.randomUUID().toString();
-        
-        ClientRegistration clientRegistration = ClientRegistration.withRegistrationId("keycloak")
-                .clientId("bff-client")
-                .clientSecret("mysecret")
-                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                .redirectUri("{baseUrl}/login/oauth2/code/keycloak")
-                .authorizationUri("http://localhost:8080/realms/my-realm/protocol/openid-connect/auth")
-                .tokenUri(tokenUrl)
-                .userInfoUri("http://localhost:8080/realms/my-realm/protocol/openid-connect/userinfo")
-                .userNameAttributeName("preferred_username")
-                .build();
 
-        OAuth2AccessToken accessToken = new OAuth2AccessToken(
-                OAuth2AccessToken.TokenType.BEARER, accessTokenValue, Instant.now(), Instant.now().plusSeconds(300));
-        OAuth2RefreshToken refreshToken = new OAuth2RefreshToken(refreshTokenValue, Instant.now());
+        BffSession session = new BffSession(
+                "user",
+                accessTokenValue,
+                Instant.now().plusSeconds(300),
+                refreshTokenValue,
+                "dummy-token-value",
+                Set.of("openid", "profile", "email"));
 
-        OAuth2AuthorizedClient authorizedClient = new OAuth2AuthorizedClient(
-                clientRegistration, "user", accessToken, refreshToken);
-
-        sessionService.save(jti, authorizedClient);
+        sessionService.save(jti, session);
 
         // 3. Generate Session Cookie
         OidcIdToken idToken = new OidcIdToken("dummy-token-value", Instant.now(), Instant.now().plusSeconds(60), Map.of("sub", "user", "email", "user@example.com", "name", "User Name"));
