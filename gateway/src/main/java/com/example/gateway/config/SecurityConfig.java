@@ -33,7 +33,7 @@ public class SecurityConfig {
                 // "/actuator/prometheus" is permitted so Prometheus can scrape metrics without a
                 // token; a dedicated management.server.port (separate from the app port, not
                 // internet-routable) is the production-grade alternative.
-                .pathMatchers("/*/public/**", "/actuator/health", "/actuator/prometheus", "/webjars/swagger-ui/**", "/v3/api-docs/**", "/fallback").permitAll()
+                .pathMatchers("/*/public/**", "/actuator/health", "/actuator/health/**", "/actuator/prometheus", "/webjars/swagger-ui/**", "/v3/api-docs/**", "/fallback").permitAll()
                 // Require authentication for everything else
                 .anyExchange().authenticated()
             )

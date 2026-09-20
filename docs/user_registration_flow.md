@@ -217,9 +217,9 @@ Gateway → /api/public/register (to Profile Service)
 | created_at | TIMESTAMP | For cleanup jobs |
 
 No password column: the self-registration flow never collects one (see Security Design Decision
-#2 above). A `password_hash` column may still be present in an existing dev database from before
-this change - `spring.jpa.hibernate.ddl-auto=update` adds/alters columns but never drops them, so
-it simply goes unused rather than being actively removed.
+#2 above). The schema is managed by Flyway (`profile-service/src/main/resources/db/migration`);
+migration `V2__drop_password_hash.sql` removes the leftover `password_hash` column from databases
+created before this change.
 
 ## Configuration
 

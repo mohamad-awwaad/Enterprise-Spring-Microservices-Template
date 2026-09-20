@@ -55,8 +55,8 @@ public class ResourceServerSecurityAutoConfiguration {
              */
             .csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(authorize -> {
-                // Always permit actuator health and prometheus endpoints
-                authorize.requestMatchers("/actuator/health", "/actuator/prometheus").permitAll();
+                // Always permit actuator health (incl. liveness/readiness probe groups) and prometheus endpoints
+                authorize.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/prometheus").permitAll();
 
                 // Permit additional public endpoints from configuration
                 for (String pattern : properties.getPublicEndpoints()) {

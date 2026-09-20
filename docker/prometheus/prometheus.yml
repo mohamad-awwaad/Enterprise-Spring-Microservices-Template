@@ -8,51 +8,57 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # BFF Service
+  # BFF Service - actuator is served on the separate management port (default 9081), not the
+  # public port (8081), so it isn't exposed alongside the public API.
   - job_name: 'bff'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:8081']
+      - targets: ['host.docker.internal:9081']
+      - targets: ['bff:9081']
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
         replacement: 'bff'
 
-  # Gateway Service
+  # Gateway Service - actuator on the separate management port (default 9888).
   - job_name: 'gateway'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:8888']
+      - targets: ['host.docker.internal:9888']
+      - targets: ['gateway:9888']
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
         replacement: 'gateway'
 
-  # Profile Service
+  # Profile Service - actuator on the separate management port (default 9082).
   - job_name: 'profile-service'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:8082']
+      - targets: ['host.docker.internal:9082']
+      - targets: ['profile-service:9082']
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
         replacement: 'profile-service'
 
-  # Order Service
+  # Order Service - actuator on the separate management port (default 9083).
   - job_name: 'order-service'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:8083']
+      - targets: ['host.docker.internal:9083']
+      - targets: ['order-service:9083']
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
         replacement: 'order-service'
 
-  # Keycloak Admin Service
+  # Keycloak Admin Service - actuator on the separate management port (default 9084).
   - job_name: 'keycloak-admin-service'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:8084']
+      - targets: ['host.docker.internal:9084']
+      - targets: ['keycloak-admin-service:9084']
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance

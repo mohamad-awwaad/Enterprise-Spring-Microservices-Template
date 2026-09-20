@@ -4,6 +4,7 @@ import com.example.profileservice.dto.UserProfileRequest;
 import com.example.profileservice.dto.UserProfileResponse;
 import com.example.profileservice.model.Gender;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -29,10 +30,10 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "spring.datasource.hikari.maximum-pool-size=1",
                 "spring.datasource.hikari.minimum-idle=0",
                 "spring.datasource.hikari.idle-timeout=10000",
-                "spring.datasource.hikari.max-lifetime=10000",
-                "spring.jpa.hibernate.ddl-auto=create-drop"
+                "spring.datasource.hikari.max-lifetime=10000"
 })
 @Testcontainers
+@Tag("requires-keycloak")
 class ProfileIntegrationTest {
 
         @Container

@@ -7,6 +7,7 @@ import com.example.profileservice.repository.UserProfileEntityRepository;
 import com.example.profileservice.service.EmailService;
 import com.example.profileservice.service.KeycloakAdminClient;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,10 +36,10 @@ import static org.mockito.Mockito.*;
                 "spring.datasource.hikari.minimum-idle=0",
                 "spring.datasource.hikari.idle-timeout=10000",
                 "spring.datasource.hikari.max-lifetime=10000",
-                "spring.jpa.hibernate.ddl-auto=create-drop",
                 "app.registration.confirmation-base-url=http://localhost:4200/confirm"
 })
 @Testcontainers
+@Tag("requires-keycloak")
 class RegistrationIntegrationTest {
 
         @Container

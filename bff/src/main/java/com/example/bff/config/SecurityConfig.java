@@ -75,7 +75,7 @@ public class SecurityConfig {
                  * for a template. A dedicated management.server.port (separate from the app
                  * port, not internet-routable) is the production-grade alternative.
                  */
-                .requestMatchers("/bff/login", "/bff/logout", "/bff/public/**", "/login/**", "/oauth2/**", "/bff/api/**", "/error", "/actuator/health", "/actuator/prometheus").permitAll()
+                .requestMatchers("/bff/login", "/bff/logout", "/bff/public/**", "/login/**", "/oauth2/**", "/bff/api/**", "/error", "/actuator/health", "/actuator/health/**", "/actuator/prometheus").permitAll()
                 .anyRequest().authenticated())
             .oauth2Login(oauth2 -> oauth2
                 .defaultSuccessUrl("/bff/login/success", true)
