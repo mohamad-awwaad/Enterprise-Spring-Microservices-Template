@@ -6,7 +6,7 @@ This document outlines the specific infrastructure configurations and policy aud
 
 - [ ] **Secrets Management:**
     - Transition from hardcoded values in `application.properties` to Environment Variables or a Secrets Manager (e.g., Vault, AWS Secrets Manager).
-    - Ensure `docker-compose.yml` uses `.env` files (excluded from Git) for credentials.
+    - Ensure `compose.yaml` uses `.env` files (excluded from Git) for credentials.
 - [ ] **BFF Session Signing Key:**
     - Set `BFF_JWT_SIGNING_KEY` before starting with the `prod` profile - `JwtUtils` refuses to
       start under `prod` without one (fail-fast), and otherwise falls back to an ephemeral

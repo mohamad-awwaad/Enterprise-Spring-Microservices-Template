@@ -1,0 +1,433 @@
+name: enterprise-spring-microservices-template
+
+# ==============================================================================
+# Infra-only mode (default): everything the Spring Boot services and Angular
+# dev server need when you run them yourself on the host.
+#
+#   docker compose up -d
+#
+# Full-stack mode: also builds and runs the 5 Java services + the Angular UI
+# in Docker. Keycloak has no fixed KC_HOSTNAME, so the browser must resolve
+# the "keycloak" hostname too - add this to /etc/hosts first:
+#
+#   127.0.0.1 keycloak
+#
+#   docker compose --profile apps up -d --build
+#
+# See README.md > "Run everything in Docker" for details.
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # Infra (no profile - always started by a plain `docker compose up`)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:8-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - sec-network
+
+  postgres-keycloak:
+    image: postgres:18-alpine
+    container_name: postgres-keycloak
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      # postgres:18 changed the data directory layout - mount at
+      # /var/lib/postgresql (not the old .../data) and use a fresh volume name
+      # so the old postgres:16 volume is never reused with the new layout.
+      - postgres_keycloak_data_18:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - sec-network
+
+  postgres-profile:
+    image: postgres:18-alpine
+    container_name: postgres-profile
+    environment:
+      POSTGRES_DB: profile_db
+      POSTGRES_USER: ${PROFILE_DB_USER:-profile_user}
+      POSTGRES_PASSWORD: ${PROFILE_DB_PASSWORD:-profile_password}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_profile_data_18:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - sec-network
+
+  postgres-order:
+    image: postgres:18-alpine
+    container_name: postgres-order
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: ${ORDER_DB_USER:-order_user}
+      POSTGRES_PASSWORD: ${ORDER_DB_PASSWORD:-order_password}
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_order_data_18:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - sec-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4
+    container_name: keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres-keycloak
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-password}
+      KC_HTTP_ENABLED: true
+      KC_HTTP_PORT: 8080
+      KC_HEALTH_ENABLED: true
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres-keycloak:
+        condition: service_healthy
+    volumes:
+      - ./keycloak/realm-config:/opt/keycloak/data/import
+    healthcheck:
+      # No curl/wget in the Keycloak image - probe the management health
+      # endpoint (KC_HEALTH_ENABLED, port 9000) with bash's /dev/tcp instead.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          cat <&3 | grep -q '"status": "UP"'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks:
+      - sec-network
+
+  zipkin:
+    image: openzipkin/zipkin:3
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9411/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - sec-network
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - sec-network
+
+  loki:
+    image: grafana/loki:3.7.8
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    # No healthcheck: the Loki image is distroless (no shell, no wget/curl).
+    networks:
+      - sec-network
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      loki:
+        condition: service_started
+      zipkin:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - sec-network
+
+  # ----------------------------------------------------------------------------
+  # Apps (profile "apps" - only started with `docker compose --profile apps ...`)
+  # ----------------------------------------------------------------------------
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: gateway
+    container_name: gateway
+    profiles: ["apps"]
+    ports:
+      - "8888:8888"
+      - "9888:9888"
+    environment:
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-my-realm}
+      API_AUDIENCE: ${API_AUDIENCE:-template-api}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PROFILE_SERVICE_URL: http://profile-service:8082
+      ORDER_SERVICE_URL: http://order-service:8083
+      ADMIN_SERVICE_URL: http://keycloak-admin-service:8084
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      MANAGEMENT_PORT: 9888
+    depends_on:
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9888/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - sec-network
+
+  profile-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: profile-service
+    container_name: profile-service
+    profiles: ["apps"]
+    ports:
+      - "8082:8082"
+      - "9082:9082"
+    environment:
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-my-realm}
+      API_AUDIENCE: ${API_AUDIENCE:-template-api}
+      DATABASE_URL: jdbc:postgresql://postgres-profile:5432/profile_db
+      DATABASE_USERNAME: ${PROFILE_DB_USER:-profile_user}
+      DATABASE_PASSWORD: ${PROFILE_DB_PASSWORD:-profile_password}
+      JPA_SHOW_SQL: ${JPA_SHOW_SQL:-false}
+      KEYCLOAK_ADMIN_SERVICE_URL: http://keycloak-admin-service:8084/api
+      INTERNAL_CLIENT_ID: ${INTERNAL_CLIENT_ID:-internal-client}
+      INTERNAL_CLIENT_SECRET: ${INTERNAL_CLIENT_SECRET:-my-internal-secret}
+      REGISTRATION_CONFIRMATION_URL: ${REGISTRATION_CONFIRMATION_URL:-http://localhost:4200/confirm}
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      MANAGEMENT_PORT: 9082
+    depends_on:
+      postgres-profile:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9082/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - sec-network
+
+  order-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: order-service
+    container_name: order-service
+    profiles: ["apps"]
+    ports:
+      - "8083:8083"
+      - "9083:9083"
+    environment:
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-my-realm}
+      API_AUDIENCE: ${API_AUDIENCE:-template-api}
+      DATABASE_URL: jdbc:postgresql://postgres-order:5432/order_db
+      DATABASE_USERNAME: ${ORDER_DB_USER:-order_user}
+      DATABASE_PASSWORD: ${ORDER_DB_PASSWORD:-order_password}
+      JPA_SHOW_SQL: ${JPA_SHOW_SQL:-false}
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      MANAGEMENT_PORT: 9083
+    depends_on:
+      postgres-order:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9083/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - sec-network
+
+  keycloak-admin-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: keycloak-admin-service
+    container_name: keycloak-admin-service
+    profiles: ["apps"]
+    ports:
+      - "8084:8084"
+      - "9084:9084"
+    environment:
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-my-realm}
+      API_AUDIENCE: ${API_AUDIENCE:-template-api}
+      KEYCLOAK_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-my-realm}
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-admin-service-client}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-admin-secret}
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      MANAGEMENT_PORT: 9084
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9084/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - sec-network
+
+  bff:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: bff
+    container_name: bff
+    profiles: ["apps"]
+    ports:
+      - "8081:8081"
+      - "9081:9081"
+    environment:
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-my-realm}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-bff-client}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-mysecret}
+      BFF_JWT_ISSUER: ${BFF_JWT_ISSUER:-https://bff.example.com}
+      BFF_JWT_SIGNING_KEY: ${BFF_JWT_SIGNING_KEY:-}
+      BFF_COOKIE_SECURE: ${BFF_COOKIE_SECURE:-false}
+      GATEWAY_URL: http://gateway:8888
+      FRONTEND_URL: http://localhost:4200
+      CORS_ALLOWED_ORIGINS: http://localhost:4200
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      MANAGEMENT_PORT: 9081
+    depends_on:
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9081/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - sec-network
+
+  angular-ui:
+    build:
+      context: angular-ui
+      dockerfile: Dockerfile
+    container_name: angular-ui
+    profiles: ["apps"]
+    ports:
+      - "4200:4200"
+    depends_on:
+      - bff
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4200/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - sec-network
+
+networks:
+  sec-network:
+    name: sec-network
+    driver: bridge
+
+volumes:
+  redis_data:
+  postgres_keycloak_data_18:
+  postgres_profile_data_18:
+  postgres_order_data_18:
+  prometheus-data:
+  grafana-storage:

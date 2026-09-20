@@ -6,66 +6,41 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-KEYCLOAK_DIR="keycloak"
-KEYCLOAK_COMPOSE="docker-compose.yml"
-OBSERVABILITY_COMPOSE="docker/docker-compose.yml"
+COMPOSE_FILE="compose.yaml"
+
+# Management (actuator) ports - separate from each service's public port.
+# See MANAGEMENT_PORT in .env.example.
+declare -A MGMT_PORTS=(
+    [bff]=9081
+    [gateway]=9888
+    [profile-service]=9082
+    [order-service]=9083
+    [keycloak-admin-service]=9084
+)
+
+declare -A APP_PORTS=(
+    [bff]=8081
+    [gateway]=8888
+    [profile-service]=8082
+    [order-service]=8083
+    [keycloak-admin-service]=8084
+)
 
 start_services() {
     echo -e "${YELLOW}Starting SEC Microservices Environment...${NC}"
 
     # ==========================================
-    # 1. Start Keycloak (Docker Compose)
+    # 1. Start infra (Keycloak, Postgres, Redis, observability stack)
     # ==========================================
-    echo -e "\n${YELLOW}[1/6] Starting Keycloak...${NC}"
-    docker compose -f "$KEYCLOAK_DIR/$KEYCLOAK_COMPOSE" up -d
+    echo -e "\n${YELLOW}[1/2] Starting infra (docker compose up -d --wait)...${NC}"
+    # --wait blocks until every infra container reports healthy, replacing the
+    # old fixed "sleep 10" guess.
+    docker compose -f "$COMPOSE_FILE" up -d --wait
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Keycloak started/checked successfully.${NC}"
-        echo -e "${YELLOW}Waiting for Keycloak to be ready (this might take a moment)...${NC}"
-        # Give Keycloak time to initialize app context after port is open
-        sleep 10
+        echo -e "${GREEN}Infra is up and healthy.${NC}"
     else
-        echo -e "${RED}Failed to start Keycloak.${NC}"
+        echo -e "${RED}Failed to start infra. Run 'docker compose -f $COMPOSE_FILE ps' to see what's unhealthy.${NC}"
         exit 1
-    fi
-
-    # ==========================================
-    # 2. Start Observability (Zipkin)
-    # ==========================================
-    echo -e "\n${YELLOW}[2/6] Starting Observability (Zipkin)...${NC}"
-    docker compose -f "$OBSERVABILITY_COMPOSE" up -d
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Zipkin started successfully. UI: http://localhost:9411${NC}"
-    else
-        echo -e "${RED}Failed to start Zipkin.${NC}"
-        exit 1
-    fi
-
-    # ==========================================
-    # 3. Start Profile DB (Docker Compose)
-    # ==========================================
-    echo -e "\n${YELLOW}[3/6] Starting Profile DB...${NC}"
-    PROFILE_COMPOSE="profile-service/docker-compose.yml"
-    
-    docker compose -f "$PROFILE_COMPOSE" up -d
-    if [ $? -eq 0 ]; then
-         echo -e "${GREEN}Profile DB started/checked successfully.${NC}"
-    else
-         echo -e "${RED}Failed to start Profile DB.${NC}"
-         exit 1
-    fi
-
-    # ==========================================
-    # 4. Start Order DB (Docker Compose)
-    # ==========================================
-    echo -e "\n${YELLOW}[4/6] Starting Order DB...${NC}"
-    ORDER_COMPOSE="order-service/docker-compose.yml"
-    
-    docker compose -f "$ORDER_COMPOSE" up -d
-    if [ $? -eq 0 ]; then
-         echo -e "${GREEN}Order DB started/checked successfully.${NC}"
-    else
-         echo -e "${RED}Failed to start Order DB.${NC}"
-         exit 1
     fi
 
     start_apps
@@ -73,50 +48,45 @@ start_services() {
 
 start_apps() {
     # ==========================================
-    # 5. Start Spring Boot Services
+    # 2. Start Spring Boot Services (on the host, via the Maven wrapper)
     # ==========================================
     start_service_app() {
         SERVICE_DIR=$1
-        PORT=$2
-        NAME=$3
+        NAME=$2
+        PORT=${APP_PORTS[$SERVICE_DIR]}
+        MGMT_PORT=${MGMT_PORTS[$SERVICE_DIR]}
 
         echo -e "\n${YELLOW}[Checking $NAME]${NC}"
-        
+
         # Check if port is in use
-            if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null ; then
-                echo -e "${GREEN}$NAME is already running on port $PORT.${NC}"
-            else
-                echo -e "${YELLOW}Starting $NAME on port $PORT...${NC}"
-                # Run in background with nohup, redirect output to a log file
-                (cd "$SERVICE_DIR" && nohup mvn spring-boot:run > run.log 2>&1 &)
-                
-                # Give it a split second to fail immediately if something is wrong
-                sleep 2
-                if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null ; then
-                     echo -e "${GREEN}$NAME started (PID: $(lsof -Pi :$PORT -sTCP:LISTEN -t)).Logs: $SERVICE_DIR/run.log${NC}"
-                else
-                     echo -e "${YELLOW}$NAME startup initiated. Check logs at $SERVICE_DIR/run.log${NC}"
+        if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null ; then
+            echo -e "${GREEN}$NAME is already running on port $PORT.${NC}"
+        else
+            echo -e "${YELLOW}Starting $NAME on port $PORT (management port $MGMT_PORT)...${NC}"
+            # Run in background with nohup, redirect output to a log file
+            (nohup ./mvnw -pl "$SERVICE_DIR" -am spring-boot:run > "$SERVICE_DIR/run.log" 2>&1 &)
+
+            # Poll the readiness probe instead of guessing with a fixed sleep.
+            for i in $(seq 1 30); do
+                if curl -sf "http://localhost:$MGMT_PORT/actuator/health/readiness" >/dev/null 2>&1; then
+                    echo -e "${GREEN}$NAME is up and ready.${NC}"
+                    break
                 fi
-            fi    }
+                sleep 2
+                if [ "$i" -eq 30 ]; then
+                    echo -e "${YELLOW}$NAME hasn't reported ready yet. Check logs at $SERVICE_DIR/run.log${NC}"
+                fi
+            done
+        fi
+    }
 
-    # Start Services
-    # BFF (Port 8081)
-    start_service_app "bff" 8081 "BFF Service"
-
-    # Gateway (Port 8888)
-    start_service_app "gateway" 8888 "Gateway Service"
-
-    # Profile Service (Port 8082)
-    start_service_app "profile-service" 8082 "Profile Service"
-
-    # Order Service (Port 8083)
-    start_service_app "order-service" 8083 "Order Service"
-
-    # Keycloak Admin Service (Port 8084)
-    start_service_app "keycloak-admin-service" 8084 "Keycloak Admin Service"
+    start_service_app "bff" "BFF Service"
+    start_service_app "gateway" "Gateway Service"
+    start_service_app "profile-service" "Profile Service"
+    start_service_app "order-service" "Order Service"
+    start_service_app "keycloak-admin-service" "Keycloak Admin Service"
 
     echo -e "\n${GREEN}All services have been processed.${NC}"
-    echo -e "${YELLOW}Note: Spring Boot services take some time to fully initialize. Check logs if they are not accessible immediately.${NC}"
 }
 
 stop_services() {
@@ -124,26 +94,10 @@ stop_services() {
 
     stop_apps
 
-    # Stop Keycloak
-    echo -e "\n${YELLOW}Stopping Keycloak...${NC}"
-    docker compose -f "$KEYCLOAK_DIR/$KEYCLOAK_COMPOSE" stop
-    echo -e "${GREEN}Keycloak stopped.${NC}"
+    echo -e "\n${YELLOW}Stopping infra...${NC}"
+    docker compose -f "$COMPOSE_FILE" stop
+    echo -e "${GREEN}Infra stopped.${NC}"
 
-    # Stop Observability (Zipkin)
-    echo -e "\n${YELLOW}Stopping Zipkin...${NC}"
-    docker compose -f "$OBSERVABILITY_COMPOSE" stop
-    echo -e "${GREEN}Zipkin stopped.${NC}"
-
-    # Stop Profile DB
-    echo -e "\n${YELLOW}Stopping Profile DB...${NC}"
-    docker compose -f "profile-service/docker-compose.yml" stop
-    echo -e "${GREEN}Profile DB stopped.${NC}"
-
-    # Stop Order DB
-    echo -e "\n${YELLOW}Stopping Order DB...${NC}"
-    docker compose -f "order-service/docker-compose.yml" stop
-    echo -e "${GREEN}Order DB stopped.${NC}"
-    
     echo -e "\n${GREEN}All services stopped.${NC}"
 }
 
@@ -171,12 +125,14 @@ stop_apps() {
 
 test_services() {
     echo -e "${YELLOW}Running tests for all services...${NC}"
+    echo -e "${YELLOW}(Tests tagged @Tag(\"requires-keycloak\") need a live Keycloak at localhost:8080 -"
+    echo -e "run './manage_services.sh start' first, or pass -Dtest.excludedGroups=requires-keycloak to skip them.)${NC}"
 
     run_test() {
         SERVICE_DIR=$1
         NAME=$2
         echo -e "\n${YELLOW}[Testing $NAME]${NC}"
-        (cd "$SERVICE_DIR" && mvn test)
+        ./mvnw -pl "$SERVICE_DIR" -am test
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}$NAME tests passed.${NC}"
         else

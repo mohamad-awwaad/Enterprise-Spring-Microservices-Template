@@ -9,6 +9,7 @@ A production-ready secure microservices template using **Spring Boot 4.x**, **Ke
 - [Features](#features)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
+- [Run everything in Docker](#run-everything-in-docker)
 - [Project Structure](#project-structure)
 - [Services](#services)
 - [Security Patterns](#security-patterns)
@@ -86,7 +87,7 @@ A production-ready secure microservices template using **Spring Boot 4.x**, **Ke
 - Docker & Docker Compose
 - Java 25
 - Node.js 18+ (for Angular UI)
-- Maven
+- Maven (or just use the bundled `./mvnw` wrapper - no local Maven install needed)
 
 ### 1. Start Backend Services
 
@@ -139,6 +140,52 @@ npm start
 
 ---
 
+## Run everything in Docker
+
+Steps 1-3 above run infra in Docker and the Java/Angular apps on the host. To run the
+**entire stack** (infra + all 5 Java services + Angular UI) in Docker instead:
+
+1. Keycloak has no fixed hostname (`KC_HOSTNAME` is intentionally unset), so it's reachable
+   as `keycloak:8080` from other containers *and* the browser needs to resolve that same
+   name. Add this line to `/etc/hosts` once:
+
+   ```
+   127.0.0.1 keycloak
+   ```
+
+2. Build and start everything:
+
+   ```bash
+   docker compose --profile apps up -d --build
+   ```
+
+   This builds the 5 Java services from the root `Dockerfile` (one multi-stage Dockerfile,
+   selected per service with `--build-arg MODULE=<service-dir>`) and the Angular UI from
+   `angular-ui/Dockerfile`, then starts them alongside the infra containers on the same
+   `sec-network`.
+
+3. Same ports as the host-run setup, plus each service's management (actuator) port:
+
+   | Service                | App port | Management port |
+   |-------------------------|----------|------------------|
+   | Angular UI              | 4200     | -                |
+   | BFF                     | 8081     | 9081             |
+   | Gateway                 | 8888     | 9888             |
+   | Profile Service         | 8082     | 9082             |
+   | Order Service            | 8083     | 9083             |
+   | Keycloak Admin Service   | 8084     | 9084             |
+
+4. Stop everything (infra + apps):
+
+   ```bash
+   docker compose --profile apps down
+   ```
+
+To go back to infra-only mode, `docker compose up -d` (no `--profile apps`) starts just
+Keycloak, the databases, Redis and the observability stack, same as before.
+
+---
+
 ## Project Structure
 
 ```
@@ -148,7 +195,9 @@ root_folder/
 │   │   ├── core/               # Auth service, interceptors, guards
 │   │   ├── features/           # Login, Dashboard, Profile, Orders
 │   │   └── shared/             # Main layout with sidenav
-│   └── proxy.conf.json         # Dev proxy to BFF
+│   ├── proxy.conf.json         # Dev proxy to BFF
+│   ├── Dockerfile              # Build + nginx runtime image
+│   └── nginx.conf              # SPA fallback + /bff/ reverse proxy
 ├── bff/                        # Backend-for-Frontend Service
 ├── gateway/                    # Spring Cloud Gateway
 ├── profile-service/            # User Profile Microservice
@@ -158,8 +207,11 @@ root_folder/
 ├── common-web/                 # Shared web components (Exception handling)
 ├── common-security/            # Shared security config (Resource Server setup)
 ├── dependencies-bom/           # Dependency version management
-├── docker/                     # Docker Compose configurations
+├── docker/                     # Prometheus/Grafana provisioning config
 ├── docs/                       # Architecture documentation
+├── Dockerfile                  # Shared multi-stage build for all 5 Java services
+├── compose.yaml                # Infra (default) + apps (--profile apps) stack
+├── mvnw / mvnw.cmd              # Maven wrapper - no local Maven install needed
 └── manage_services.sh          # Service management script
 ```
 
@@ -193,22 +245,26 @@ common-core (zero dependencies)
 
 ## Services
 
-| Service             | Port | Technology                     | Purpose                                    |
-|---------------------|------|--------------------------------|--------------------------------------------|
-| **Angular UI**      | 4200 | Angular 21, Material           | Web application                            |
-| **BFF**             | 8081 | Spring Boot 4.x (MVC)          | OAuth2 client, session management          |
-| **Gateway**         | 8888 | Spring Cloud Gateway (WebFlux) | API routing, JWT validation, rate limiting |
-| **Profile Service** | 8082 | Spring Boot 4.x                | User profile CRUD                          |
-| **Order Service**   | 8083 | Spring Boot 4.x                | Order management                           |
-| **Keycloak Admin**  | 8084 | Spring Boot 4.x                | User provisioning proxy                    |
-| **Keycloak**        | 8080 | Keycloak 26.x                  | Identity Provider                          |
-| **PostgreSQL**      | 5433 | PostgreSQL 16                  | Application data                           |
-| **PostgreSQL**      | 5432 | PostgreSQL 16                  | Keycloak data                              |
-| **Redis**           | 6379 | Redis 7                        | BFF session storage, rate limiting         |
-| **Zipkin**          | 9411 | Zipkin 3                       | Distributed tracing UI                     |
-| **Prometheus**      | 9090 | Prometheus 2.51                | Metrics collection                         |
-| **Loki**            | 3100 | Loki 3.0                       | Log aggregation                            |
-| **Grafana**         | 3000 | Grafana 11.0                   | Metrics & logs visualization               |
+| Service             | Port | Management Port | Technology                     | Purpose                                    |
+|---------------------|------|------------------|--------------------------------|--------------------------------------------|
+| **Angular UI**      | 4200 | -                | Angular 21, Material           | Web application                            |
+| **BFF**             | 8081 | 9081             | Spring Boot 4.x (MVC)          | OAuth2 client, session management          |
+| **Gateway**         | 8888 | 9888             | Spring Cloud Gateway (WebFlux) | API routing, JWT validation, rate limiting |
+| **Profile Service** | 8082 | 9082             | Spring Boot 4.x                | User profile CRUD                          |
+| **Order Service**   | 8083 | 9083             | Spring Boot 4.x                | Order management                           |
+| **Keycloak Admin**  | 8084 | 9084             | Spring Boot 4.x                | User provisioning proxy                    |
+| **Keycloak**        | 8080 | -                | Keycloak 26.x                  | Identity Provider                          |
+| **PostgreSQL**      | 5433 | -                | PostgreSQL 18                  | Application data (profile)                 |
+| **PostgreSQL**      | 5434 | -                | PostgreSQL 18                  | Application data (order)                   |
+| **PostgreSQL**      | 5432 | -                | PostgreSQL 18                  | Keycloak data                              |
+| **Redis**           | 6379 | -                | Redis 8                        | BFF session storage, rate limiting         |
+| **Zipkin**          | 9411 | -                | Zipkin 3                       | Distributed tracing UI                     |
+| **Prometheus**      | 9090 | -                | Prometheus 3.14                | Metrics collection                         |
+| **Loki**            | 3100 | -                | Loki 3.7                       | Log aggregation                            |
+| **Grafana**         | 3000 | -                | Grafana 13.2                   | Metrics & logs visualization               |
+
+Actuator (health, metrics, prometheus) is served on each service's management port, not its
+public port - see `MANAGEMENT_PORT` in `.env.example`.
 
 > **Note on Gateway Stack:** The API Gateway runs on **Spring Cloud Gateway Server WebFlux** (Spring Boot 4.x) while the other services use MVC. It was originally chosen for the built-in **Redis `RequestRateLimiter`**, which relies on the Reactive stack. Spring Cloud Gateway Server MVC now offers an equivalent distributed `RateLimiter` filter (Bucket4j with a Redis-backed `ProxyManager`), so migrating the Gateway to the servlet stack is a possible future consolidation rather than a blocker.
 
@@ -523,11 +579,37 @@ All API errors return standardized [Problem Details](https://datatracker.ietf.or
 ### Commands
 
 ```bash
-./manage_services.sh start     # Start all services
+./manage_services.sh start     # Start all services (infra in Docker, apps on the host)
 ./manage_services.sh stop      # Stop all services
 ./manage_services.sh restart   # Restart services
 ./manage_services.sh test      # Run tests
 ```
+
+Or build/test the Java services directly with the bundled Maven wrapper (no local Maven
+install required):
+
+```bash
+./mvnw -DskipTests package                             # Build all services
+./mvnw test                                             # Run all tests (needs Keycloak running)
+./mvnw test -Dtest.excludedGroups=requires-keycloak     # Run tests that don't need Keycloak
+```
+
+See [Run everything in Docker](#run-everything-in-docker) to run the whole stack, apps
+included, in containers instead.
+
+### Database Migrations
+
+`profile-service` and `order-service` manage their schema with Flyway
+(`src/main/resources/db/migration/V*.sql`); Hibernate only validates it
+(`spring.jpa.hibernate.ddl-auto=validate`). Add a new `V<n>__<name>.sql` file for every schema
+change. Existing databases created by the old `ddl-auto=update` setup are baselined at version 1
+on first start (`spring.flyway.baseline-on-migrate=true`).
+
+### CI and Dependency Updates
+
+`.gitlab-ci.yml` builds the Java services and the Angular app, runs the tests that do not need
+a live Keycloak (Testcontainers via Docker-in-Docker) and, on `main` and tags, builds the Docker
+images. `renovate.json` keeps Maven, npm, Docker image and CI image versions up to date.
 
 ### Angular Development
 
@@ -547,8 +629,8 @@ npm test                       # Run tests
 | Gateway       | Spring Cloud Gateway WebFlux (Spring Boot 4.x)       |
 | Services      | Spring Boot 4.x (MVC), Spring Data JPA               |
 | Identity      | Keycloak 26.x                                        |
-| Database      | PostgreSQL 16                                        |
-| Cache         | Redis 7                                              |
+| Database      | PostgreSQL 18                                        |
+| Cache         | Redis 8                                              |
 | Tracing       | Micrometer Tracing, Zipkin 3                         |
 | Metrics       | Micrometer, Prometheus                               |
 | Logging       | Logback, Logstash Encoder, Loki                      |

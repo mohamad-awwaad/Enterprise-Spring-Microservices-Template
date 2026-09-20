@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "dependencyDashboard": true,
+  "semanticCommits": "disabled",
+  "schedule": ["before 6am every weekday"],
+  "dockerfile": {
+    "enabled": true
+  },
+  "docker-compose": {
+    "enabled": true
+  },
+  "gitlabci": {
+    "enabled": true
+  },
+  "gitlabci-include": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "groupName": "Spring Boot & Spring Cloud",
+      "matchPackageNames": [
+        "org.springframework.boot**",
+        "org.springframework.cloud**"
+      ]
+    },
+    {
+      "groupName": "Angular",
+      "matchPackageNames": ["@angular**"]
+    },
+    {
+      "groupName": "Docker images",
+      "matchManagers": ["dockerfile", "docker-compose", "gitlabci"]
+    }
+  ]
+}
