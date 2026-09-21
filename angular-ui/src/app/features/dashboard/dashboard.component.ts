@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, ChangeDetectionStrategy } from '@angular/core';
 
 import { RouterModule } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
@@ -67,6 +67,7 @@ import { OrdersService } from '../orders/orders.service';
       </mat-card>
     </div>
   `,
+    changeDetection: ChangeDetectionStrategy.Eager,
     styles: [`
     h1 {
       margin-bottom: 24px;
@@ -109,7 +110,7 @@ export class DashboardComponent implements OnInit {
 
     try {
       const orders = await this.ordersService.getOrders();
-      this.orderCount.set(orders.totalElements);
+      this.orderCount.set(orders.page.totalElements);
     } catch {
       this.orderCount.set(0);
     }

@@ -4,12 +4,17 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { Order } from './order.model';
 
+// Matches Spring Data's PagedModel JSON shape, now returned explicitly by
+// OrdersController#getOrders (new PagedModel<>(page)) instead of a bare Page:
+// { content: [...], page: { size, number, totalElements, totalPages } }
 export interface Page<T> {
   content: T[];
-  totalElements: number;
-  totalPages: number;
-  size: number;
-  number: number;
+  page: {
+    size: number;
+    number: number;
+    totalElements: number;
+    totalPages: number;
+  };
 }
 
 @Injectable({

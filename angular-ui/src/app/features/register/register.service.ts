@@ -4,9 +4,7 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 
 export interface RegisterRequest {
-  username: string;
   email: string;
-  password: string;
   firstName: string;
   lastName: string;
   mobileNumber?: string;

@@ -1,6 +1,6 @@
 # Enterprise Spring Microservices Template
 
-A production-ready secure microservices template using **Spring Boot 4.x**, **Keycloak**, and **Angular 21**. Designed to support both Web (BFF pattern) and Mobile (direct JWT) applications with enterprise-grade security.
+A production-ready secure microservices template using **Spring Boot 4.x**, **Keycloak**, and **Angular 22**. Designed to support both Web (BFF pattern) and Mobile (direct JWT) applications with enterprise-grade security.
 
 ---
 
@@ -9,6 +9,7 @@ A production-ready secure microservices template using **Spring Boot 4.x**, **Ke
 - [Features](#features)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
+- [Run everything in Docker](#run-everything-in-docker)
 - [Project Structure](#project-structure)
 - [Services](#services)
 - [Security Patterns](#security-patterns)
@@ -30,9 +31,9 @@ A production-ready secure microservices template using **Spring Boot 4.x**, **Ke
 - **Distributed Tracing** - Micrometer Tracing with Zipkin for end-to-end request visibility
 - **Centralized Logging** - Structured JSON logs with Loki aggregation and Grafana visualization
 - **Prometheus Metrics** - JVM, HTTP, and circuit breaker metrics with Grafana dashboards
-- **Robust API Error Handling** - Jakarta Validation on DTOs with standardized [RFC 7807 Problem Details](https://datatracker.ietf.org/doc/html/rfc7807) responses.
+- **Robust API Error Handling** - Jakarta Validation on DTOs with standardized [RFC 9457 (formerly 7807) Problem Details](https://datatracker.ietf.org/doc/html/rfc9457) responses.
 - **OpenAPI Documentation** - Swagger UI with Gateway aggregation
-- **Angular 21 UI** - Modern standalone components with Angular Material
+- **Angular 22 UI** - Modern standalone components with Angular Material
 - **Keycloak Integration** - Enterprise identity provider with user management
 - **Testcontainers** - Reliable integration testing with ephemeral databases
 
@@ -85,8 +86,11 @@ A production-ready secure microservices template using **Spring Boot 4.x**, **Ke
 
 - Docker & Docker Compose
 - Java 25
-- Node.js 18+ (for Angular UI)
-- Maven
+- Node.js 24+ (for Angular UI, Angular 22)
+- Maven (or just use the bundled `./mvnw` wrapper - no local Maven install needed)
+- [Playwright](https://playwright.dev/) browsers, only needed for the Angular E2E suite - run
+  `npx playwright install chromium` once inside `angular-ui/` (see
+  [Frontend tests](#frontend-tests))
 
 ### 1. Start Backend Services
 
@@ -103,15 +107,15 @@ This starts:
 - Redis
 - All Spring Boot services
 
-### 2. Configure Keycloak (First Time Only)
+### 2. Keycloak is Pre-Configured
 
-The `admin-service-client` needs permissions to manage users:
+The realm import (`keycloak/realm-config/realm-export.json`) already grants
+`admin-service-client`'s service account the `realm-management` client roles
+(`manage-users`, `view-users`) it needs to manage users - no manual setup required.
 
-1. Login to [http://localhost:8080/admin](http://localhost:8080/admin) (`admin` / `admin`)
-2. Select **my-realm** (top-left dropdown)
-3. Go to **Clients** → **admin-service-client** → **Service Account Roles**
-4. Click **Assign Role** → Filter by **clients** → Select **realm-management**
-5. Assign **manage-users** and **view-users** roles
+To verify: log in to [http://localhost:8080/admin](http://localhost:8080/admin) (`admin` / `admin`),
+select **my-realm**, then **Clients** → **admin-service-client** → **Service Account Roles** and
+confirm **manage-users** and **view-users** are listed.
 
 ### 3. Start Angular UI
 
@@ -139,16 +143,64 @@ npm start
 
 ---
 
+## Run everything in Docker
+
+Steps 1-3 above run infra in Docker and the Java/Angular apps on the host. To run the
+**entire stack** (infra + all 5 Java services + Angular UI) in Docker instead:
+
+1. Keycloak has no fixed hostname (`KC_HOSTNAME` is intentionally unset), so it's reachable
+   as `keycloak:8080` from other containers *and* the browser needs to resolve that same
+   name. Add this line to `/etc/hosts` once:
+
+   ```
+   127.0.0.1 keycloak
+   ```
+
+2. Build and start everything:
+
+   ```bash
+   docker compose --profile apps up -d --build
+   ```
+
+   This builds the 5 Java services from the root `Dockerfile` (one multi-stage Dockerfile,
+   selected per service with `--build-arg MODULE=<service-dir>`) and the Angular UI from
+   `angular-ui/Dockerfile`, then starts them alongside the infra containers on the same
+   `sec-network`.
+
+3. Same ports as the host-run setup, plus each service's management (actuator) port:
+
+   | Service                | App port | Management port |
+   |-------------------------|----------|------------------|
+   | Angular UI              | 4200     | -                |
+   | BFF                     | 8081     | 9081             |
+   | Gateway                 | 8888     | 9888             |
+   | Profile Service         | 8082     | 9082             |
+   | Order Service            | 8083     | 9083             |
+   | Keycloak Admin Service   | 8084     | 9084             |
+
+4. Stop everything (infra + apps):
+
+   ```bash
+   docker compose --profile apps down
+   ```
+
+To go back to infra-only mode, `docker compose up -d` (no `--profile apps`) starts just
+Keycloak, the databases, Redis and the observability stack, same as before.
+
+---
+
 ## Project Structure
 
 ```
 root_folder/
-├── angular-ui/                 # Angular 21 Web Application
+├── angular-ui/                 # Angular 22 Web Application
 │   ├── src/app/
 │   │   ├── core/               # Auth service, interceptors, guards
 │   │   ├── features/           # Login, Dashboard, Profile, Orders
 │   │   └── shared/             # Main layout with sidenav
-│   └── proxy.conf.json         # Dev proxy to BFF
+│   ├── proxy.conf.json         # Dev proxy to BFF
+│   ├── Dockerfile              # Build + nginx runtime image
+│   └── nginx.conf              # SPA fallback + /bff/ reverse proxy
 ├── bff/                        # Backend-for-Frontend Service
 ├── gateway/                    # Spring Cloud Gateway
 ├── profile-service/            # User Profile Microservice
@@ -157,9 +209,14 @@ root_folder/
 ├── common-core/                # Shared constants and utilities (Zero dependencies)
 ├── common-web/                 # Shared web components (Exception handling)
 ├── common-security/            # Shared security config (Resource Server setup)
+├── common-test/                # Testcontainers helpers (Keycloak, Redis) for module tests
 ├── dependencies-bom/           # Dependency version management
-├── docker/                     # Docker Compose configurations
+├── docker/                     # Prometheus/Grafana provisioning config
 ├── docs/                       # Architecture documentation
+├── service-parent/             # Parent POM for the 4 servlet services
+├── Dockerfile                  # Shared multi-stage build for all 5 Java services
+├── compose.yaml                # Infra (default) + apps (--profile apps) stack
+├── mvnw / mvnw.cmd              # Maven wrapper - no local Maven install needed
 └── manage_services.sh          # Service management script
 ```
 
@@ -187,30 +244,52 @@ common-core (zero dependencies)
                     └── Used by: Profile Service, Order Service, Keycloak Admin
 ```
 
-> **Note:** Gateway is standalone (Spring Boot 3.x) and doesn't use shared libraries.
+> **Note:** Gateway shares the parent POM but doesn't use the common-* shared libraries, since those are servlet-based and the Gateway runs on WebFlux.
+
+Maven POM layout:
+
+```
+microservices-parent (root)      versions only: Boot parent + dependencies-bom, no dependencies
+    ├── common-core / common-web / common-security / common-test   declare exactly what they use
+    ├── gateway                                                    WebFlux, declares its own stack
+    └── service-parent            shared by the servlet services: web, security, resource server,
+            │                     actuator, lombok, test starters, common-test (+ Lombok build setup)
+            ├── bff
+            ├── profile-service
+            ├── order-service
+            └── keycloak-admin-service
+```
+
+`common-security` also supplies the resource-server defaults (`issuer-uri`, `audiences`) through an
+`EnvironmentPostProcessor` (`ResourceServerDefaultsEnvironmentPostProcessor`), so services only set
+`KEYCLOAK_ISSUER_URI` / `API_AUDIENCE`, or override the keys in their own properties when they differ.
 
 ---
 
 ## Services
 
-| Service             | Port | Technology                     | Purpose                                    |
-|---------------------|------|--------------------------------|--------------------------------------------|
-| **Angular UI**      | 4200 | Angular 21, Material           | Web application                            |
-| **BFF**             | 8081 | Spring Boot 4.x (MVC)          | OAuth2 client, session management          |
-| **Gateway**         | 8888 | Spring Cloud Gateway (WebFlux) | API routing, JWT validation, rate limiting |
-| **Profile Service** | 8082 | Spring Boot 4.x                | User profile CRUD                          |
-| **Order Service**   | 8083 | Spring Boot 4.x                | Order management                           |
-| **Keycloak Admin**  | 8084 | Spring Boot 4.x                | User provisioning proxy                    |
-| **Keycloak**        | 8080 | Keycloak 24.x                  | Identity Provider                          |
-| **PostgreSQL**      | 5433 | PostgreSQL 16                  | Application data                           |
-| **PostgreSQL**      | 5432 | PostgreSQL 16                  | Keycloak data                              |
-| **Redis**           | 6379 | Redis 7                        | BFF session storage, rate limiting         |
-| **Zipkin**          | 9411 | Zipkin 3                       | Distributed tracing UI                     |
-| **Prometheus**      | 9090 | Prometheus 2.51                | Metrics collection                         |
-| **Loki**            | 3100 | Loki 3.0                       | Log aggregation                            |
-| **Grafana**         | 3000 | Grafana 11.0                   | Metrics & logs visualization               |
+| Service             | Port | Management Port | Technology                     | Purpose                                    |
+|---------------------|------|------------------|--------------------------------|--------------------------------------------|
+| **Angular UI**      | 4200 | -                | Angular 22, Material           | Web application                            |
+| **BFF**             | 8081 | 9081             | Spring Boot 4.x (MVC)          | OAuth2 client, session management          |
+| **Gateway**         | 8888 | 9888             | Spring Cloud Gateway (WebFlux) | API routing, JWT validation, rate limiting |
+| **Profile Service** | 8082 | 9082             | Spring Boot 4.x                | User profile CRUD                          |
+| **Order Service**   | 8083 | 9083             | Spring Boot 4.x                | Order management                           |
+| **Keycloak Admin**  | 8084 | 9084             | Spring Boot 4.x                | User provisioning proxy                    |
+| **Keycloak**        | 8080 | -                | Keycloak 26.x                  | Identity Provider                          |
+| **PostgreSQL**      | 5433 | -                | PostgreSQL 18                  | Application data (profile)                 |
+| **PostgreSQL**      | 5434 | -                | PostgreSQL 18                  | Application data (order)                   |
+| **PostgreSQL**      | 5432 | -                | PostgreSQL 18                  | Keycloak data                              |
+| **Redis**           | 6379 | -                | Redis 8                        | BFF session storage, rate limiting         |
+| **Zipkin**          | 9411 | -                | Zipkin 3                       | Distributed tracing UI                     |
+| **Prometheus**      | 9090 | -                | Prometheus 3.14                | Metrics collection                         |
+| **Loki**            | 3100 | -                | Loki 3.7                       | Log aggregation                            |
+| **Grafana**         | 3000 | -                | Grafana 13.2                   | Metrics & logs visualization               |
 
-> **Note on Gateway Stack:** The API Gateway runs on **Spring Boot 3.5.x (WebFlux)** instead of 4.x (MVC). This is a deliberate architectural choice to enable the built-in **Redis RequestRateLimiter**, which relies on the non-blocking Reactive stack. Upgrading the Gateway to MVC/Servlet stack would require a custom rate-limiting implementation.
+Actuator (health, metrics, prometheus) is served on each service's management port, not its
+public port - see `MANAGEMENT_PORT` in `.env.example`.
+
+> **Note on Gateway Stack:** The API Gateway runs on **Spring Cloud Gateway Server WebFlux** (Spring Boot 4.x) while the other services use MVC. It was originally chosen for the built-in **Redis `RequestRateLimiter`**, which relies on the Reactive stack. Spring Cloud Gateway Server MVC now offers an equivalent distributed `RateLimiter` filter (Bucket4j with a Redis-backed `ProxyManager`), so migrating the Gateway to the servlet stack is a possible future consolidation rather than a blocker.
 
 ---
 
@@ -267,6 +346,13 @@ View in Zipkin to see timing breakdown across services.
 ---
 
 ## Security Patterns
+
+Every resource server (Gateway, profile-service, order-service, keycloak-admin-service)
+requires the `aud=template-api` claim on every token it accepts, so a token minted for an
+unrelated client is rejected even if it's otherwise valid; and the internal user-registration
+call from profile-service to keycloak-admin-service is itself authenticated with an
+`internal-client` client-credentials token carrying the `INTERNAL_SERVICE` realm role, not
+left open behind the Gateway's block route alone.
 
 ### Web Application Flow (BFF Pattern)
 
@@ -340,6 +426,32 @@ sequenceDiagram
     BFF->>BFF: Forward request with valid token
 ```
 
+Refresh-token rotation is enabled in the realm (`revokeRefreshToken`, `refreshTokenMaxReuse=0`),
+so a refresh token can be used once. To keep concurrent requests from racing for the same
+refresh, the BFF takes a short Redis lock per session (`bff:session:<jti>:refresh-lock`); the
+other requests wait for the lock and then reuse the refreshed tokens. Details in
+[docs/proactive_token_refresh.md](docs/proactive_token_refresh.md).
+
+### Security Headers
+
+- BFF responses carry `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` (plus Spring Security's defaults; HSTS is
+  sent on HTTPS).
+- The Angular nginx image (`angular-ui/nginx.conf`) sends a CSP for the SPA, `X-Content-Type-Options`,
+  `X-Frame-Options`, `Referrer-Policy` and `Permissions-Policy`. `form-action` lists the BFF and
+  Keycloak origins because the logout form POST redirects there; adjust it for your domains.
+
+### Redis Authentication
+
+Redis requires a password (`REDIS_PASSWORD`, default `redis_password` in `compose.yaml` - change it
+outside local development). `REDIS_SSL_ENABLED=true` turns on TLS for the BFF and gateway
+connections when the Redis server offers it.
+
+### Virtual Threads
+
+The servlet services (BFF, profile, order, keycloak-admin) run with `spring.threads.virtual.enabled=true`;
+the blocking BFF proxy in particular benefits. The gateway is reactive (WebFlux) and does not use them.
+
 ---
 
 ## Frontend Integration & Session Management
@@ -363,8 +475,18 @@ X-Requested-With: XMLHttpRequest
 *   **Browser Navigation:** Redirects to Keycloak Login.
 *   **AJAX (with Header):** Returns `401 Unauthorized`. The Angular `AuthInterceptor` detects this and redirects the user to login programmatically.
 
+### CSRF Protection
+The BFF enables CSRF protection in **all** profiles using Spring Security's SPA recipe: every response carries a readable `XSRF-TOKEN` cookie, and every state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`) to a cookie-authenticated endpoint must echo it back in the `X-XSRF-TOKEN` header, otherwise the BFF answers `403`.
+
+*   Angular's `HttpClient` does this automatically for relative URLs (`/bff/...`), so no frontend code is needed.
+*   Public endpoints (`/bff/public/**`) are exempt: they carry no session cookie, so there is nothing to forge.
+*   Other HTTP clients (tests, curl) must first `GET` any BFF endpoint to receive the cookie, then send both the cookie and the header.
+
 ### Single Sign-Out (SLO)
-A single request to `/bff/logout` performs a comprehensive sign-out across all layers:
+A single `POST` to `/bff/logout` performs a comprehensive sign-out across all layers (it is a
+state-changing request, so - unlike a plain link - it requires the CSRF token like any other
+`POST`; see CSRF Protection above and `AuthService.logout()` in Angular for how it submits one via
+a hidden form):
 1.  **Local & Session Cleanup:** Deletes the Redis session, invalidates the `JSESSIONID`, and clears both `BFF_SESSION` and `JSESSIONID` cookies.
 2.  **Identity Provider Logout:** Automatically redirects the browser to Keycloak's logout endpoint to terminate the SSO session, ensuring the user is fully logged out of the IdP.
 
@@ -433,7 +555,7 @@ Response flows back
 | Method | Endpoint           | Description              |
 |--------|--------------------|--------------------------|
 | GET    | `/bff/login`       | Initiate OAuth2 login    |
-| GET    | `/bff/logout`      | Logout and clear session |
+| POST   | `/bff/logout`      | Logout and clear session (CSRF-protected, like any other state-changing request) |
 | GET    | `/bff/user`        | Get current user info    |
 | GET    | `/bff/api/profile` | Get user profile         |
 | POST   | `/bff/api/profile` | Create user profile      |
@@ -441,22 +563,39 @@ Response flows back
 | GET    | `/bff/api/orders`  | List orders              |
 | POST   | `/bff/api/orders`  | Create order             |
 
+`GET /orders` returns a Spring Data `PagedModel` (`OrdersController` wraps the `Page<OrderResponse>`
+explicitly with `new PagedModel<>(page)`, so the shape doesn't depend on
+`spring.data.web.pageable.serialization-mode`):
+
+```json
+{
+  "content": [
+    { "orderNumber": "ORD-999", "status": "CREATED", "createdBy": "d9b60c5d-...", "creationTime": "2026-01-01T00:00:00.123456Z" }
+  ],
+  "page": { "size": 20, "number": 0, "totalElements": 1, "totalPages": 1 }
+}
+```
+
 ### Public Endpoints (no authentication)
 
 | Method | Endpoint                                | Description                |
 |--------|-----------------------------------------|----------------------------|
-| POST   | `/bff/public/profile/register`          | Register new user          |
+| POST   | `/bff/public/profile/register`          | Register new user (email + profile fields only, no username/password; always returns 201 with the same generic message - see [User Registration](docs/user_registration_flow.md)) |
 | GET    | `/bff/public/profile/confirm?token=xxx` | Confirm email registration |
 
 Note: Public endpoints follow the pattern `/bff/public/{service}/{path}` which maps to `/{service}/public/{path}` at the gateway, then to `/api/public/{path}` at the service (simplified routing strips the service name).
 
 ### Mobile Endpoints (via Gateway)
 
+`bff-client` is a confidential, browser-only client (`directAccessGrantsEnabled=false`); it
+cannot do a password grant. For quick curl testing, use `test-client`, a confidential client
+dedicated to integration tests and manual API calls:
+
 ```bash
-# Get access token
+# Get access token (test-client - integration tests/curl only)
 curl -X POST http://localhost:8080/realms/my-realm/protocol/openid-connect/token \
-  -d "client_id=bff-client" \
-  -d "client_secret=mysecret" \
+  -d "client_id=test-client" \
+  -d "client_secret=test-secret" \
   -d "grant_type=password" \
   -d "username=user" \
   -d "password=password"
@@ -465,9 +604,12 @@ curl -X POST http://localhost:8080/realms/my-realm/protocol/openid-connect/token
 curl -H "Authorization: Bearer <TOKEN>" http://localhost:8888/profile
 ```
 
-### Error Responses (RFC 7807)
+Real mobile apps should instead use the public `mobile-client` with the authorization code
+flow + PKCE (`S256`) - it has no client secret and never performs a password grant.
 
-All API errors return standardized [Problem Details](https://datatracker.ietf.org/doc/html/rfc7807) format:
+### Error Responses (RFC 9457, formerly RFC 7807)
+
+All API errors return standardized [Problem Details](https://datatracker.ietf.org/doc/html/rfc9457) format:
 
 ```json
 {
@@ -486,7 +628,9 @@ All API errors return standardized [Problem Details](https://datatracker.ietf.or
 |--------|------------------------|---------------------------------------------------|
 | 400    | Input Validation Error | Request body fails DTO validation                 |
 | 401    | Unauthorized           | Missing or invalid JWT                            |
+| 403    | Forbidden              | Authenticated but lacks the required role/authority |
 | 404    | Not Found              | Resource doesn't exist                            |
+| 405    | Method Not Allowed     | HTTP method not supported for the endpoint        |
 | 409    | Conflict               | Resource already exists (e.g., duplicate profile) |
 | 500    | Internal Server Error  | Unexpected server error (sanitized in production) |
 
@@ -497,11 +641,60 @@ All API errors return standardized [Problem Details](https://datatracker.ietf.or
 ### Commands
 
 ```bash
-./manage_services.sh start     # Start all services
+./manage_services.sh start     # Start all services (infra in Docker, apps on the host)
 ./manage_services.sh stop      # Stop all services
 ./manage_services.sh restart   # Restart services
 ./manage_services.sh test      # Run tests
 ```
+
+Or build/test the Java services directly with the bundled Maven wrapper (no local Maven
+install required):
+
+```bash
+./mvnw -DskipTests package     # Build all services
+./mvnw test                    # Run all tests (needs Docker only)
+```
+
+Integration tests are self-contained: the `common-test` module starts Keycloak (with the realm
+import from `keycloak/realm-config`), Redis and PostgreSQL as Testcontainers, so no running
+stack is needed. Each module's suite adds roughly 15 seconds for the Keycloak container.
+
+See [Run everything in Docker](#run-everything-in-docker) to run the whole stack, apps
+included, in containers instead.
+
+### Database Migrations
+
+`profile-service` and `order-service` manage their schema with Flyway
+(`src/main/resources/db/migration/V*.sql`); Hibernate only validates it
+(`spring.jpa.hibernate.ddl-auto=validate`). Add a new `V<n>__<name>.sql` file for every schema
+change. Existing databases created by the old `ddl-auto=update` setup are baselined at version 1
+on first start (`spring.flyway.baseline-on-migrate=true`).
+
+`order-service`'s `V2__order_audit_columns.sql` adds Spring Data JPA auditing and optimistic
+locking to `orders`: `creation_time`/`update_time` become `timestamp(6) with time zone`
+(populated by `@CreatedDate`/`@LastModifiedDate`, backed by `java.time.Instant`), `created_by`/
+`updated_by` are populated by `@CreatedBy`/`@LastModifiedBy` via an `AuditorAware<String>`
+(`JpaAuditingConfig`) that reads the authenticated JWT's subject instead of the
+controller/service setting them by hand, and a `version bigint` column backs `@Version` for
+optimistic locking (an `OptimisticLockException` on a concurrent update instead of a silent
+last-write-wins).
+
+### SBOM and Dependency Scanning
+
+`mvn package` at the repo root generates a CycloneDX SBOM for the whole reactor at
+`target/bom.json` (the `cyclonedx-maven-plugin`'s version is inherited from
+`spring-boot-starter-parent`'s own `pluginManagement`). CI's `build` job keeps it as an artifact,
+and a report-only `security` job (stage `test`, `aquasec/trivy:latest`, `allow_failure: true`)
+runs `trivy sbom` against it plus `trivy fs` against the working tree for vulnerabilities and
+misconfigurations, publishing a JSON report as a plain artifact.
+
+### CI and Dependency Updates
+
+`.gitlab-ci.yml` builds the Java services and the Angular app (with its unit tests), runs the
+Java tests with Testcontainers via Docker-in-Docker, scans the SBOM and working tree with Trivy
+(report-only, see [SBOM and Dependency Scanning](#sbom-and-dependency-scanning)), offers a
+manual Playwright E2E job and, on `main` and tags, builds the Docker images. `renovate.json`
+keeps Maven, npm, Docker image and CI image versions up to date.
 
 ### Angular Development
 
@@ -512,23 +705,40 @@ npm run build                  # Production build
 npm test                       # Run tests
 ```
 
+### Frontend tests
+
+`angular-ui` has two separate test suites:
+
+- **Unit tests** (`npm test`, from `angular-ui/`) run the component/service specs with Vitest
+  (via `@angular/build:unit-test`), headless and non-interactively - safe to call from CI as-is.
+  They mock the backend with `provideHttpClientTesting()`, so nothing else needs to be running.
+- **End-to-end tests** (`npm run e2e`, from `angular-ui/`) run with Playwright against a real,
+  already-running stack. Before calling it, the following must be up:
+  - Angular dev server on http://localhost:4200 (`npm start`)
+  - BFF on http://localhost:8081, Gateway, Keycloak (`my-realm`) and the profile/order services
+  - The Playwright browser itself: run `npx playwright install chromium` once
+
+  `E2E_BASE_URL` overrides the app URL (defaults to `http://localhost:4200`), and
+  `E2E_KEYCLOAK_USER` / `E2E_KEYCLOAK_PASSWORD` override the Keycloak test credentials (default
+  to the `user` / `password` test account).
+
 ### Tech Stack
 
 | Layer         | Technology                                           |
 |---------------|------------------------------------------------------|
-| Frontend      | Angular 21, Angular Material, RxJS, Signals          |
+| Frontend      | Angular 22, Angular Material, RxJS, Signals          |
 | BFF           | Spring Boot 4.x (MVC), Spring Security OAuth2 Client |
-| Gateway       | Spring Cloud Gateway WebFlux (Spring Boot 3.x)       |
+| Gateway       | Spring Cloud Gateway WebFlux (Spring Boot 4.x)       |
 | Services      | Spring Boot 4.x (MVC), Spring Data JPA               |
-| Identity      | Keycloak 24.x                                        |
-| Database      | PostgreSQL 16                                        |
-| Cache         | Redis 7                                              |
+| Identity      | Keycloak 26.x                                        |
+| Database      | PostgreSQL 18                                        |
+| Cache         | Redis 8                                              |
 | Tracing       | Micrometer Tracing, Zipkin 3                         |
 | Metrics       | Micrometer, Prometheus                               |
 | Logging       | Logback, Logstash Encoder, Loki                      |
 | Visualization | Grafana (dashboards for metrics, logs, traces)       |
 | Resilience    | Resilience4j (Circuit Breaker)                       |
-| Testing       | JUnit 5, Testcontainers, Jasmine                     |
+| Testing       | JUnit 5, Testcontainers, Vitest, Playwright                     |
 
 ---
 
@@ -547,13 +757,24 @@ npm test                       # Run tests
 
 ### Keycloak Configuration
 
-| Setting       | Value                  |
-|---------------|------------------------|
-| Realm         | `my-realm`             |
-| BFF Client    | `bff-client`           |
-| Admin Client  | `admin-service-client` |
-| Test User     | `user` / `password`    |
-| Admin Console | `admin` / `admin`      |
+| Setting          | Value                                                             |
+|------------------|--------------------------------------------------------------------|
+| Realm            | `my-realm`                                                        |
+| BFF Client       | `bff-client` (confidential, authorization code + PKCE only)       |
+| Admin Client     | `admin-service-client`                                            |
+| Internal Client  | `internal-client` (service-to-service, `INTERNAL_SERVICE` role)   |
+| Test Client      | `test-client` / `test-secret` (integration tests/curl only)       |
+| Mobile Client    | `mobile-client` (public, authorization code + PKCE)               |
+| Test User        | `user` / `password`                                               |
+| Admin Console    | `admin` / `admin`                                                 |
+
+### BFF Session Signing Key
+
+The BFF signs the `BFF_SESSION` JWT with an RSA key from `BFF_JWT_SIGNING_KEY`. In dev/test, when
+that variable is unset, the BFF automatically generates and uses an ephemeral in-memory key at
+startup (logged as a warning) - no setup needed, but sessions won't survive a restart. In
+production (`prod` profile active), the BFF refuses to start unless `BFF_JWT_SIGNING_KEY` is set;
+see `.env.example` for how to generate one.
 
 ---
 

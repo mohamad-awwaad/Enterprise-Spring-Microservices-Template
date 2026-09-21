@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 
 import { FormsModule } from '@angular/forms';
 import { Router, RouterModule } from '@angular/router';
@@ -69,16 +69,6 @@ import { RegisterService, RegisterRequest } from './register.service';
                 <input matInput [(ngModel)]="formData.mobileNumber" name="mobileNumber" placeholder="+1234567890">
               </mat-form-field>
 
-              <mat-form-field appearance="outline" class="full-width">
-                <mat-label>Password</mat-label>
-                <input matInput [type]="hidePassword ? 'password' : 'text'"
-                       [(ngModel)]="formData.password" name="password" required minlength="8">
-                <button mat-icon-button matSuffix (click)="hidePassword = !hidePassword" type="button">
-                  <mat-icon>{{ hidePassword ? 'visibility_off' : 'visibility' }}</mat-icon>
-                </button>
-                <mat-hint>Minimum 8 characters</mat-hint>
-              </mat-form-field>
-
               <div class="form-row">
                 <mat-form-field appearance="outline">
                   <mat-label>Gender</mat-label>
@@ -114,6 +104,7 @@ import { RegisterService, RegisterRequest } from './register.service';
       </mat-card>
     </div>
   `,
+    changeDetection: ChangeDetectionStrategy.Eager,
     styles: [`
     .register-container {
       display: flex;
@@ -199,12 +190,9 @@ export class RegisterComponent {
   submitting = signal(false);
   success = signal(false);
   registeredEmail = signal('');
-  hidePassword = true;
 
   formData: RegisterRequest = {
-    username: '',
     email: '',
-    password: '',
     firstName: '',
     lastName: '',
     mobileNumber: '',
@@ -213,9 +201,6 @@ export class RegisterComponent {
   };
 
   async register(): Promise<void> {
-    // Use email as username
-    this.formData.username = this.formData.email;
-
     this.submitting.set(true);
     try {
       const response = await this.registerService.register(this.formData);

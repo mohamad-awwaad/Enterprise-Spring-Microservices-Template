@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnInit, ChangeDetectionStrategy, signal } from '@angular/core';
 import { Router, RouterModule } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
@@ -23,7 +23,7 @@ import { AuthService } from '../../core/services/auth.service';
           <mat-card-subtitle>Secure Microservices Template</mat-card-subtitle>
         </mat-card-header>
         <mat-card-content>
-          @if (checking) {
+          @if (checking()) {
             <div class="checking-auth">
               <mat-spinner diameter="40"></mat-spinner>
               <p>Checking authentication...</p>
@@ -33,7 +33,7 @@ import { AuthService } from '../../core/services/auth.service';
           }
         </mat-card-content>
         <mat-card-actions>
-          <button mat-raised-button color="primary" (click)="login()" [disabled]="checking">
+          <button mat-raised-button color="primary" (click)="login()" [disabled]="checking()">
             <mat-icon>login</mat-icon>
             Sign in with Keycloak
           </button>
@@ -44,6 +44,7 @@ import { AuthService } from '../../core/services/auth.service';
       </mat-card>
     </div>
   `,
+    changeDetection: ChangeDetectionStrategy.Eager,
     styles: [`
     .login-container {
       display: flex;
@@ -95,14 +96,14 @@ export class LoginComponent implements OnInit {
   private authService = inject(AuthService);
   private router = inject(Router);
 
-  checking = true;
+  checking = signal(true);
 
   async ngOnInit(): Promise<void> {
     const isAuth = await this.authService.checkAuth();
     if (isAuth) {
       this.router.navigate(['/dashboard']);
     } else {
-      this.checking = false;
+      this.checking.set(false);
     }
   }
 

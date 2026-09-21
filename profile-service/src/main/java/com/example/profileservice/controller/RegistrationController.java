@@ -1,6 +1,6 @@
 package com.example.profileservice.controller;
 
-import com.example.profileservice.dto.UserRegistrationDTO;
+import com.example.profileservice.dto.SelfRegistrationRequest;
 import com.example.profileservice.model.UserProfileEntity;
 import com.example.profileservice.service.RegistrationService;
 import jakarta.validation.Valid;
@@ -20,7 +20,11 @@ import java.util.Map;
  *   <li>Rate limiting should be applied at the gateway/infrastructure level to prevent abuse</li>
  *   <li>Registration creates a disabled profile; user cannot authenticate until email is confirmed</li>
  *   <li>Keycloak user is only created AFTER email confirmation to prevent spam accounts</li>
- *   <li>Password is BCrypt-hashed in PendingRegistration, never stored in plain text</li>
+ *   <li>The user's real password is only ever set directly with Keycloak, via its own
+ *       "Set Password" email sent after confirmation - this service never sees or stores one</li>
+ *   <li>{@code /register} always answers 201 with the same generic message, whether or not the
+ *       email was already registered, so the endpoint cannot be used to enumerate accounts
+ *       (see {@link RegistrationService#register})</li>
  *   <li>Confirmation tokens are UUID v4 (122 bits of entropy), expire after configurable period</li>
  * </ul>
  * <p>
@@ -38,18 +42,22 @@ public class RegistrationController {
     private final RegistrationService registrationService;
 
     /**
-     * Registers a new user. Creates a disabled profile and sends confirmation email.
+     * Registers a new user, or silently no-ops if the email is already registered.
+     * <p>
+     * Always returns 201 with the same response shape - see
+     * {@link RegistrationService#register} for why the response cannot depend on whether the
+     * email already had an account.
      *
-     * @param dto Registration data including email, password, and profile information
-     * @return Success message with instructions
+     * @param request Registration data (email + profile fields, no username/password)
+     * @return Generic success message with instructions
      */
     @PostMapping("/register")
-    public ResponseEntity<?> register(@Valid @RequestBody UserRegistrationDTO dto) {
-        UserProfileEntity profile = registrationService.register(dto);
+    public ResponseEntity<?> register(@Valid @RequestBody SelfRegistrationRequest request) {
+        registrationService.register(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(Map.of(
-                        "message", "Registration successful. Please check your email to confirm.",
-                        "email", profile.getEmail()
+                        "message", "If this email is not registered yet, a confirmation link has been sent.",
+                        "email", request.email()
                 ));
     }
 

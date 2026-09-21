@@ -1,12 +1,10 @@
 package com.example.adminservice.dto;
 
-import lombok.Data;
-
-@Data
-public class UserDTO {
-    private String username;
-    private String email;
-    private String firstName;
-    private String lastName;
-    private String password;
+public record UserDTO(
+        String username,
+        String email,
+        String firstName,
+        String lastName,
+        String password
+) {
 }

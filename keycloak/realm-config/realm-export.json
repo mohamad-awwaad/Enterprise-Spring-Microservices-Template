@@ -2,6 +2,19 @@
 {
   "realm": "my-realm",
   "enabled": true,
+  "sslRequired": "external",
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "passwordPolicy": "length(8) and notUsername",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
   "roles": {
     "realm": [
       {
@@ -11,6 +24,10 @@
       {
         "name": "USER",
         "description": "Standard User"
+      },
+      {
+        "name": "INTERNAL_SERVICE",
+        "description": "Service-to-service calls between our own microservices (e.g. profile-service calling keycloak-admin-service's internal registration endpoint)"
       }
     ]
   },
@@ -31,21 +48,114 @@
       "redirectUris": [
         "http://localhost:8081/login/oauth2/code/keycloak"
       ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:4200/*",
+        "pkce.code.challenge.method": "S256"
+      },
       "publicClient": false,
       "protocol": "openid-connect",
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "serviceAccountsEnabled": true,
-      "authorizationServicesEnabled": true,
-      "fullScopeAllowed": true
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "aud-mapper-template-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "template-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
     },
     {
       "clientId": "internal-client",
       "clientAuthenticatorType": "client-secret",
       "secret": "my-internal-secret",
       "protocol": "openid-connect",
-      "serviceAccountsEnabled": true
+      "serviceAccountsEnabled": true,
+      "publicClient": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "aud-mapper-template-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "template-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "test-client",
+      "clientAuthenticatorType": "client-secret",
+      "secret": "test-secret",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "aud-mapper-template-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "template-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "mobile-client",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "com.example.app://callback",
+        "http://localhost:*/callback"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "com.example.app://logout"
+      },
+      "protocolMappers": [
+        {
+          "name": "aud-mapper-template-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "template-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -83,6 +193,25 @@
       "realmRoles": [
         "default-roles-my-realm"
       ]
+    },
+    {
+      "username": "service-account-internal-client",
+      "serviceAccountClientId": "internal-client",
+      "enabled": true,
+      "realmRoles": [
+        "INTERNAL_SERVICE"
+      ]
+    },
+    {
+      "username": "service-account-admin-service-client",
+      "serviceAccountClientId": "admin-service-client",
+      "enabled": true,
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users"
+        ]
+      }
     }
   ]
 }

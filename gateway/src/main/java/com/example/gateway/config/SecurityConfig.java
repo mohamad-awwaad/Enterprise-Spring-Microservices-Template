@@ -2,6 +2,7 @@ package com.example.gateway.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.web.server.SecurityWebFilterChain;
@@ -29,11 +30,14 @@ public class SecurityConfig {
                 // Allow public endpoints and Swagger UI resources
                 // Pattern: /*/public/** matches service-prefixed public paths like:
                 //   /profile/public/register, /profile/public/api-docs, /orders/public/api-docs
-                .pathMatchers("/*/public/**", "/actuator/health", "/webjars/swagger-ui/**", "/v3/api-docs/**", "/fallback").permitAll()
+                // "/actuator/prometheus" is permitted so Prometheus can scrape metrics without a
+                // token; a dedicated management.server.port (separate from the app port, not
+                // internet-routable) is the production-grade alternative.
+                .pathMatchers("/*/public/**", "/actuator/health", "/actuator/health/**", "/actuator/prometheus", "/webjars/swagger-ui/**", "/v3/api-docs/**", "/fallback").permitAll()
                 // Require authentication for everything else
                 .anyExchange().authenticated()
             )
-            .oauth2ResourceServer(oauth2 -> oauth2.jwt());
+            .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
         
         return http.build();
     }

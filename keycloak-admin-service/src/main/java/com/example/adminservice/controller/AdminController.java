@@ -59,16 +59,16 @@ public class AdminController {
 
     private static @NonNull UserRepresentation getUserRepresentation(UserDTO userDto) {
         UserRepresentation user = new UserRepresentation();
-        user.setUsername(userDto.getUsername());
-        user.setEmail(userDto.getEmail());
-        user.setFirstName(userDto.getFirstName());
-        user.setLastName(userDto.getLastName());
+        user.setUsername(userDto.username());
+        user.setEmail(userDto.email());
+        user.setFirstName(userDto.firstName());
+        user.setLastName(userDto.lastName());
         user.setEnabled(true);
 
-        if (userDto.getPassword() != null) {
+        if (userDto.password() != null) {
             CredentialRepresentation cred = new CredentialRepresentation();
             cred.setType(CredentialRepresentation.PASSWORD);
-            cred.setValue(userDto.getPassword());
+            cred.setValue(userDto.password());
             cred.setTemporary(false);
             user.setCredentials(Collections.singletonList(cred));
         }
@@ -76,27 +76,35 @@ public class AdminController {
     }
 
     /**
-     * Creates a user for self-registration flow (internal use only).
+     * Creates a user for self-registration flow (internal, service-to-service use only).
      * <p>
      * <b>Security Notes:</b>
      * <ul>
-     *   <li>This endpoint is NOT protected by @PreAuthorize because it's called by profile-service
-     *       after email confirmation (service-to-service call with JWT)</li>
+     *   <li>Protected by {@code @PreAuthorize("hasRole('INTERNAL_SERVICE')")}: this endpoint is no
+     *       longer in {@code security.resource-server.public-endpoints}, so it now requires a
+     *       valid bearer token carrying the {@code INTERNAL_SERVICE} realm role, which only the
+     *       {@code internal-client} service account holds (client-credentials grant). The
+     *       Gateway's block route on {@code /admin/users/register} remains as defense in depth
+     *       for external callers, but this endpoint is also directly authenticated so it is safe
+     *       even if reached without going through the Gateway.</li>
      *   <li>User is created with emailVerified=true since we already confirmed via our flow</li>
      *   <li>User is created WITHOUT a password; Keycloak sends UPDATE_PASSWORD action email</li>
      *   <li>This prevents password from ever being transmitted or stored by our services
      *       (only the confirmation token's BCrypt hash is temporarily stored)</li>
      * </ul>
      * <p>
-     * <b>Called by:</b> Profile-service's RegistrationService.confirm() after successful email verification.
+     * <b>Called by:</b> Profile-service's RegistrationService.confirm() after successful email
+     * verification, using a client-credentials token obtained for the {@code internal} client
+     * registration (see profile-service's KeycloakAdminClient).
      */
     @PostMapping("/users/register")
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     public ResponseEntity<?> registerUser(@RequestBody RegisterUserDTO dto) {
         UserRepresentation user = new UserRepresentation();
-        user.setUsername(dto.getUsername());
-        user.setEmail(dto.getEmail());
-        user.setFirstName(dto.getFirstName());
-        user.setLastName(dto.getLastName());
+        user.setUsername(dto.username());
+        user.setEmail(dto.email());
+        user.setFirstName(dto.firstName());
+        user.setLastName(dto.lastName());
         user.setEnabled(true);
         user.setEmailVerified(true); // Already verified via our confirmation flow
 
@@ -108,7 +116,7 @@ public class AdminController {
                 String userId = CreatedResponseUtil.getCreatedId(response);
 
                 // Trigger password setup email
-                if (dto.isSendPasswordEmail()) {
+                if (dto.sendPasswordEmail()) {
                     try {
                         usersResource.get(userId).executeActionsEmail(List.of("UPDATE_PASSWORD"));
                         log.info("Password setup email sent for user: {}", userId);

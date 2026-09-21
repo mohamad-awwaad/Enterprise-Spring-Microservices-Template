@@ -1,6 +1,7 @@
 package com.example.profileservice;
 
-import com.example.profileservice.dto.UserRegistrationDTO;
+import com.example.common.test.KeycloakTestContainer;
+import com.example.profileservice.dto.SelfRegistrationRequest;
 import com.example.profileservice.model.Gender;
 import com.example.profileservice.repository.PendingRegistrationEntityRepository;
 import com.example.profileservice.repository.UserProfileEntityRepository;
@@ -15,8 +16,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.junit.jupiter.api.AfterAll;
@@ -35,7 +38,6 @@ import static org.mockito.Mockito.*;
                 "spring.datasource.hikari.minimum-idle=0",
                 "spring.datasource.hikari.idle-timeout=10000",
                 "spring.datasource.hikari.max-lifetime=10000",
-                "spring.jpa.hibernate.ddl-auto=create-drop",
                 "app.registration.confirmation-base-url=http://localhost:4200/confirm"
 })
 @Testcontainers
@@ -43,7 +45,22 @@ class RegistrationIntegrationTest {
 
         @Container
         @ServiceConnection
-        static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+        static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16");
+
+        // The resource-server auto-configuration resolves the JWT issuer's OIDC discovery
+        // document eagerly at context startup (JwtDecoders.fromIssuerLocation), so a reachable
+        // Keycloak is required even though none of the tests below call an authenticated
+        // endpoint or fetch a token. Shared singleton (see KeycloakTestContainer's Javadoc).
+        private static final KeycloakTestContainer keycloak = KeycloakTestContainer.getInstance();
+
+        @DynamicPropertySource
+        static void keycloakProperties(DynamicPropertyRegistry registry) {
+                registry.add("spring.security.oauth2.resourceserver.jwt.issuer-uri", keycloak::issuerUri);
+                // The "internal" client-credentials registration resolves its provider metadata at
+                // startup, so it must point at the container as well or the context needs a live
+                // Keycloak on localhost:8080.
+                registry.add("spring.security.oauth2.client.provider.keycloak.issuer-uri", keycloak::issuerUri);
+        }
 
         @AfterAll
         static void tearDown(@Autowired DataSource dataSource) {
@@ -82,7 +99,7 @@ class RegistrationIntegrationTest {
 
         @Test
         void testSuccessfulRegistration() {
-                UserRegistrationDTO registration = createValidRegistration("test@example.com");
+                SelfRegistrationRequest registration = createValidRegistration("test@example.com");
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -91,7 +108,7 @@ class RegistrationIntegrationTest {
                                 .expectStatus().isCreated()
                                 .expectBody()
                                 .jsonPath("$.message")
-                                .isEqualTo("Registration successful. Please check your email to confirm.")
+                                .isEqualTo("If this email is not registered yet, a confirmation link has been sent.")
                                 .jsonPath("$.email").isEqualTo("test@example.com");
 
                 // Verify email was sent
@@ -113,7 +130,7 @@ class RegistrationIntegrationTest {
         @Test
         void testSuccessfulConfirmation() {
                 // First register
-                UserRegistrationDTO registration = createValidRegistration("confirm@example.com");
+                SelfRegistrationRequest registration = createValidRegistration("confirm@example.com");
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -151,7 +168,7 @@ class RegistrationIntegrationTest {
 
         @Test
         void testDuplicateEmailRegistration() {
-                UserRegistrationDTO registration = createValidRegistration("duplicate@example.com");
+                SelfRegistrationRequest registration = createValidRegistration("duplicate@example.com");
 
                 // First registration succeeds
                 webTestClient.post().uri("/api/public/register")
@@ -160,31 +177,27 @@ class RegistrationIntegrationTest {
                                 .exchange()
                                 .expectStatus().isCreated();
 
-                // Second registration with same email fails
+                // Second registration for the same email returns the SAME 201 response - the
+                // endpoint must not reveal that the email is already registered (enumeration
+                // prevention, see RegistrationService#register).
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .bodyValue(registration)
                                 .exchange()
-                                .expectStatus().isEqualTo(409)
+                                .expectStatus().isCreated()
                                 .expectBody()
-                                .jsonPath("$.detail").isEqualTo("Email already registered");
+                                .jsonPath("$.message")
+                                .isEqualTo("If this email is not registered yet, a confirmation link has been sent.")
+                                .jsonPath("$.email").isEqualTo("duplicate@example.com");
+
+                // Only the first request actually created anything, and only it sent an email.
+                assertThat(pendingRegistrationRepository.findAll()).hasSize(1);
+                verify(emailService, times(1)).sendConfirmationEmail(eq("duplicate@example.com"), anyString());
         }
 
         @Test
         void testInvalidEmailFormat() {
-                UserRegistrationDTO registration = createValidRegistration("invalid-email");
-
-                webTestClient.post().uri("/api/public/register")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .bodyValue(registration)
-                                .exchange()
-                                .expectStatus().isBadRequest();
-        }
-
-        @Test
-        void testPasswordTooShort() {
-                UserRegistrationDTO registration = createValidRegistration("short@example.com");
-                registration.setPassword("short"); // Less than 8 characters
+                SelfRegistrationRequest registration = createValidRegistration("invalid-email");
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -205,7 +218,7 @@ class RegistrationIntegrationTest {
         @Test
         void testExpiredConfirmationToken() {
                 // First register
-                UserRegistrationDTO registration = createValidRegistration("expired@example.com");
+                SelfRegistrationRequest registration = createValidRegistration("expired@example.com");
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -228,8 +241,8 @@ class RegistrationIntegrationTest {
 
         @Test
         void testMissingRequiredFields() {
-                UserRegistrationDTO registration = new UserRegistrationDTO();
-                // All required fields are missing
+                // Email (the only @NotBlank field) is missing
+                SelfRegistrationRequest registration = new SelfRegistrationRequest(null, null, null, null, null, null);
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -238,15 +251,7 @@ class RegistrationIntegrationTest {
                                 .expectStatus().isBadRequest();
         }
 
-        private UserRegistrationDTO createValidRegistration(String email) {
-                UserRegistrationDTO dto = new UserRegistrationDTO();
-                dto.setUsername("testuser");
-                dto.setEmail(email);
-                dto.setPassword("securePassword123");
-                dto.setFirstName("Test");
-                dto.setLastName("User");
-                dto.setGender(Gender.MALE);
-                dto.setAge(25);
-                return dto;
+        private SelfRegistrationRequest createValidRegistration(String email) {
+                return new SelfRegistrationRequest(email, "Test", "User", null, Gender.MALE, 25);
         }
 }

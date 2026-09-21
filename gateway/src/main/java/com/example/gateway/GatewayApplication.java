@@ -2,26 +2,16 @@ package com.example.gateway;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.cloud.gateway.route.RouteLocator;
-import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
-import org.springframework.context.annotation.Bean;
 
+/**
+ * Routes are declared in {@code application.properties}
+ * ({@code spring.cloud.gateway.server.webflux.routes[*]}), so every route goes through the same
+ * JWT relay, rate limiter and circuit breaker filters. Do not add programmatic routes here.
+ */
 @SpringBootApplication
 public class GatewayApplication {
 
     static void main(String[] args) {
         SpringApplication.run(GatewayApplication.class, args);
-    }
-
-    @Bean
-    public RouteLocator myRoutes(RouteLocatorBuilder builder) {
-        return builder.routes()
-                .route(p -> p
-                        .path("/api/order/**")
-                        .uri("http://localhost:8083"))
-                .route(p -> p
-                        .path("/api/profile/**")
-                        .uri("http://localhost:8082"))
-                .build();
     }
 }

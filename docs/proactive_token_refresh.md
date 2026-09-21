@@ -36,6 +36,33 @@ The BFF holds the Refresh Token in its session store (Redis).
         *   Save back to Redis.
     5.  Proceed with the request using the (potentially new) Access Token.
 
+### Race-Safe Refresh (Refresh Token Rotation)
+
+The realm has refresh token rotation enabled (`revokeRefreshToken=true`,
+`refreshTokenMaxReuse=0`): every refresh call returns a brand new refresh token, and the old one
+can never be used again. That is a problem if two requests for the same session both see an
+expiring access token at nearly the same time - without protection, both would call Keycloak with
+the same (old) refresh token, and the loser would be rejected with `invalid_grant`.
+
+`TokenRefreshFilter` avoids this with a short-lived Redis lock (`RefreshLockService`), one key per
+session: `bff:session:<jti>:refresh-lock`, set with `NX` (only if absent) and a ~5 second expiry.
+
+*   The request that acquires the lock does the actual refresh, saves the new tokens, then
+    releases the lock.
+*   Any other request for the same `jti` that arrives while the lock is held does **not** refresh
+    - it polls every ~50ms (up to ~3 seconds) until the lock disappears, then reloads the session
+    from Redis and carries on with whatever the lock holder left there: fresh tokens on success,
+    or nothing if the refresh failed and the session was deleted (treated as unauthenticated,
+    same as today).
+*   The lock's own expiry is a safety net, not the primary correctness mechanism: if a refresh
+    call is unusually slow and the lock expires mid-call, and Keycloak then rejects it as
+    `invalid_grant` because another node already rotated the token first, the filter reloads the
+    session before deleting it - if it already changed, another node's fresh tokens are kept
+    instead of being wiped out by a slower, now-stale failure.
+
+This works across multiple BFF instances, not just multiple threads in one process, because the
+lock lives in the shared Redis, not in memory.
+
 ### 2. Mobile Application
 
 The Mobile App holds the Refresh Token in secure storage (Keychain/Keystore).

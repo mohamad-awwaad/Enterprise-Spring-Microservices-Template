@@ -24,12 +24,13 @@
             <http>
                 <url>${LOKI_URL:-http://localhost:3100/loki/api/v1/push}</url>
             </http>
-            <format>
-                <label>
-                    <pattern>service=${appName},level=%level</pattern>
-                </label>
-                <message class="com.github.loki4j.logback.JsonLayout"/>
-            </format>
+            <labels>
+                service = ${appName}
+                level = %level
+            </labels>
+            <message class="com.github.loki4j.logback.JsonLayout">
+                <mdc><include>traceId</include><include>spanId</include></mdc>
+            </message>
         </appender>
 
         <appender name="ASYNC_LOKI" class="ch.qos.logback.classic.AsyncAppender">

@@ -18,7 +18,12 @@ import java.util.Objects;
  * <p>
  * <b>Security:</b>
  * <ul>
- *   <li>Stores BCrypt-hashed password (never plain text)</li>
+ *   <li>Carries no password: the self-registration flow never collects one - the user's real
+ *       password is set directly with Keycloak via the "Set Password" email sent after
+ *       confirmation (see {@code RegistrationService}). A {@code password_hash} column may
+ *       still linger in an existing dev database from before this change - {@code ddl-auto=update}
+ *       adds/alters columns but never drops them, so it is simply unused going forward, not
+ *       actively removed by this template.</li>
  *   <li>Maps 1:1 with UserProfileEntity (shares same ID) for easy cleanup</li>
  * </ul>
  */
@@ -46,9 +51,6 @@ public class PendingRegistrationEntity {
 
     @Column(nullable = false)
     private Instant tokenExpiry;
-
-    @Column(name = "password_hash")
-    private String passwordHash;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

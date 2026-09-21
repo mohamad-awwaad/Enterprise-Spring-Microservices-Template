@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
 import { MatCardModule } from '@angular/material/card';
 import { MatTableModule } from '@angular/material/table';
@@ -87,6 +87,7 @@ import { Order } from './order.model';
       </mat-card>
     }
   `,
+    changeDetection: ChangeDetectionStrategy.Eager,
     styles: [`
     .header {
       display: flex;
@@ -166,7 +167,7 @@ export class OrdersComponent implements OnInit {
     try {
       const page = await this.ordersService.getOrders(this.pageIndex(), this.pageSize());
       this.orders.set(page.content);
-      this.totalElements.set(page.totalElements);
+      this.totalElements.set(page.page.totalElements);
     } catch (error) {
       this.snackBar.open('Failed to load orders', 'Dismiss', { duration: 3000 });
     } finally {

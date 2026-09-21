@@ -1,33 +1,28 @@
-# Keycloak and MySQL
+# Keycloak
 
-This directory contains a `docker-compose.yml` file to set up Keycloak and a MySQL database.
-
-## Prerequisites
-
-* Docker
-* Docker Compose
+Keycloak and its PostgreSQL database are defined in the root `compose.yaml`, not in this
+directory. This folder only holds `realm-config/` (the realm export Keycloak imports on
+startup).
 
 ## Usage
 
-1.  **Start the services:**
+From the repo root:
 
-    ```bash
-    docker-compose up -d
-    ```
+```bash
+docker compose up -d
+```
 
-2.  **Access Keycloak:**
+## Access Keycloak
 
-    Open your browser and navigate to `http://localhost:8080`.
+Open your browser and navigate to `http://localhost:8080`.
 
-3.  **Admin Console:**
+## Admin Console
 
-    *   Username: `admin`
-    *   Password: `admin`
-
-4.  **Database:**
-
-    A MySQL database named `keycloak` will be running on port `3306`.
+* Username: `admin`
+* Password: `admin`
 
 ## Realm Configuration
 
-The `docker-compose.yml` is configured to import a realm configuration from the `realm-config` directory. You will need to create this directory and place your realm export file (e.g., `realm-export.json`) in it.
+`compose.yaml` mounts this directory's `realm-config/` folder into the Keycloak container and
+starts it with `start-dev --import-realm`, which imports `realm-config/realm-export.json` on
+every startup.

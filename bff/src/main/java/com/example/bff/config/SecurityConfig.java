@@ -1,11 +1,10 @@
 package com.example.bff.config;
 
+import com.example.bff.filter.CsrfCookieFilter;
 import com.example.bff.filter.TokenRefreshFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.env.Environment;
-import org.springframework.core.env.Profiles;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -15,6 +14,9 @@ import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.security.web.util.matcher.RequestHeaderRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.http.HttpStatus;
@@ -35,7 +37,10 @@ import java.util.List;
  *   <li>Custom authentication entry point that returns 401 for AJAX requests
  *       (allowing Angular to detect auth state) and redirects for browser navigation</li>
  *   <li>CORS configured to allow the Angular frontend with credentials</li>
- *   <li>CSRF protection enabled in production, disabled in dev for testing convenience</li>
+ *   <li>CSRF protection enabled in all profiles using Spring Security's documented SPA recipe
+ *       (readable cookie + plain request handler + a filter that forces the cookie to be
+ *       written); a dev-only "disabled" branch is a template trap that hides CSRF bugs until
+ *       production</li>
  * </ul>
  */
 @Configuration
@@ -44,7 +49,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final TokenRefreshFilter tokenRefreshFilter;
-    private final Environment env;
+    private final CsrfCookieFilter csrfCookieFilter;
 
     @org.springframework.beans.factory.annotation.Value("${bff.cors.allowed-origins}")
     private List<String> allowedOrigins;
@@ -56,6 +61,19 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            /*
+             * Security headers. The BFF never serves an HTML page of its own - only JSON
+             * (proxy responses, /bff/user) and redirects (OAuth2 login, /bff/logout) - so it
+             * can take the strictest possible Content-Security-Policy: nothing is allowed to
+             * load, and it must never be framed. Neither directive affects the OAuth2/Keycloak
+             * redirects or the CSRF cookie: CSP only governs what a *loaded document* may do,
+             * and a 302 response with a Location header carries no document to constrain.
+             */
+            .headers(headers -> headers
+                .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'"))
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                .frameOptions(frame -> frame.deny())
+            )
             .addFilterBefore(tokenRefreshFilter, UsernamePasswordAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
                 /*
@@ -65,8 +83,13 @@ public class SecurityConfig {
                  *
                  * This bypasses the standard JSESSIONID-based SecurityContext
                  * for these specific proxy endpoints.
+                 *
+                 * "/actuator/prometheus" is permitted so Prometheus can scrape metrics without
+                 * a token; exposing it on the same port/filter chain as the app is convenient
+                 * for a template. A dedicated management.server.port (separate from the app
+                 * port, not internet-routable) is the production-grade alternative.
                  */
-                .requestMatchers("/bff/login", "/bff/logout", "/bff/public/**", "/login/**", "/oauth2/**", "/bff/api/**", "/error", "/actuator/health").permitAll()
+                .requestMatchers("/bff/login", "/bff/logout", "/bff/public/**", "/login/**", "/oauth2/**", "/bff/api/**", "/error", "/actuator/health", "/actuator/health/**", "/actuator/prometheus").permitAll()
                 .anyRequest().authenticated())
             .oauth2Login(oauth2 -> oauth2
                 .defaultSuccessUrl("/bff/login/success", true)
@@ -75,20 +98,28 @@ public class SecurityConfig {
                 .authenticationEntryPoint(authenticationEntryPoint())
             )
             /*
-             * CSRF Protection:
-             * - Enabled in production with cookie-based token repository.
-             * - Disabled in non-prod environments to allow integration tests to run
-             *   without requiring CSRF token handling in test HTTP clients.
+             * CSRF Protection - Spring Security's documented SPA recipe, enabled in ALL
+             * profiles (a dev-only "disabled" branch hides CSRF bugs until production):
+             * - CookieCsrfTokenRepository.withHttpOnlyFalse(): the token must be readable by
+             *   Angular's XSRF interceptor so it can echo it back as X-XSRF-TOKEN.
+             * - CsrfTokenRequestAttributeHandler (not the default XOR handler): the default
+             *   handler expects the *raw* token it wrote server-side back from the client, but
+             *   also BREAKS non-Ajax/multipart form submits when combined with a deferred
+             *   token; since the cookie itself is already unmasked (HttpOnly=false), the extra
+             *   XOR masking adds nothing here and only causes the raw cookie value Angular
+             *   sends back to be rejected.
+             * - CsrfCookieFilter (after CsrfFilter): forces the deferred token to resolve on
+             *   every request so the cookie is actually written (see its Javadoc).
+             * - Public endpoints carry no session cookie, so CSRF doesn't apply there; the
+             *   OAuth2 login endpoints are handled by Spring Security itself before any CSRF
+             *   token would exist.
              */
-            .csrf(csrf -> {
-                if (env.acceptsProfiles(Profiles.of("prod"))) {
-                    csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        .ignoringRequestMatchers("/bff/login");
-                } else {
-                    csrf.disable();
-                }
-            });
+            .csrf(csrf -> csrf
+                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                .ignoringRequestMatchers("/bff/public/**", "/bff/login", "/login/**", "/oauth2/**")
+            )
+            .addFilterAfter(csrfCookieFilter, CsrfFilter.class);
 
         return http.build();
     }

@@ -52,12 +52,12 @@ public class ProfileService {
         }
         UserProfileEntity profile = UserProfileEntity.builder()
                 .userId(userId)
-                .firstName(request.getFirstName())
-                .lastName(request.getLastName())
-                .email(request.getEmail())
-                .mobileNumber(request.getMobileNumber())
-                .gender(request.getGender())
-                .age(request.getAge())
+                .firstName(request.firstName())
+                .lastName(request.lastName())
+                .email(request.email())
+                .mobileNumber(request.mobileNumber())
+                .gender(request.gender())
+                .age(request.age())
                 .enabled(true)
                 .build();
 
@@ -85,11 +85,11 @@ public class ProfileService {
         try {
             UserProfileEntity profile = UserProfileEntity.builder()
                     .userId(userId)
-                    .firstName(dto.getFirstName())
-                    .lastName(dto.getLastName())
-                    .email(dto.getEmail())
-                    .gender(dto.getGender())
-                    .age(dto.getAge())
+                    .firstName(dto.firstName())
+                    .lastName(dto.lastName())
+                    .email(dto.email())
+                    .gender(dto.gender())
+                    .age(dto.age())
                     .build();
 
             UserProfileEntity saved = userProfileRepository.save(profile);

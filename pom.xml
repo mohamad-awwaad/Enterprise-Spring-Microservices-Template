@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.0</version>
+        <version>4.1.1</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.example</groupId>
@@ -17,14 +17,19 @@
 
     <properties>
         <java.version>25</java.version>
-        <spring-boot.version>4.1.0</spring-boot.version>
+        <!-- Boot 4.1.1 ships Tomcat 11.0.24, which has CVE-2026-65182/65905/68525 (CRITICAL);
+             remove this override once a Boot release manages 11.0.26 or newer. -->
+        <tomcat.version>11.0.26</tomcat.version>
+        <spring-boot.version>4.1.1</spring-boot.version>
     </properties>
 
     <modules>
         <module>common-core</module>
         <module>common-web</module>
         <module>common-security</module>
+        <module>common-test</module>
         <module>dependencies-bom</module>
+        <module>service-parent</module>
         <module>bff</module>
         <module>gateway</module>
         <module>profile-service</module>
@@ -44,28 +49,51 @@
         </dependencies>
     </dependencyManagement>
 
-    <dependencies>
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-    </dependencies>
+    <!-- No dependencies are inherited by every module: each module declares what it uses,
+         so common-core stays free of Spring and Lombok. -->
 
     <build>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!--
+                 CycloneDX SBOM for the whole reactor (target/bom.json at the repo root).
+                 Version comes from spring-boot-starter-parent's own pluginManagement
+                 (cyclonedx-maven-plugin.version, currently 2.9.3) - not pinned here.
+                 inherited=false keeps this bound to the aggregator (root) build only: without
+                 it, <build><plugins> entries are inherited into every child module's effective
+                 POM, and each child would run its own makeAggregateBom at its own package
+                 phase, producing a redundant (and differently-scoped) bom.json per module
+                 instead of one reactor-wide SBOM.
+            -->
+            <plugin>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
+                <inherited>false</inherited>
+                <executions>
+                    <!-- spring-boot-starter-parent's pluginManagement binds a "default" execution
+                         of this same goal at generate-resources (writing to
+                         target/classes/META-INF/sbom/); disable it here so only the
+                         generate-sbom execution below runs, producing exactly target/bom.json. -->
+                    <execution>
+                        <id>default</id>
+                        <phase>none</phase>
+                    </execution>
+                    <execution>
+                        <id>generate-sbom</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>makeAggregateBom</goal>
+                        </goals>
+                        <configuration>
+                            <outputFormat>json</outputFormat>
+                            <outputName>bom</outputName>
+                            <outputDirectory>${project.build.directory}</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

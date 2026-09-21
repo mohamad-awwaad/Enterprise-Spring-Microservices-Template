@@ -1,0 +1,28 @@
+# Version control
+.git
+.gitignore
+
+# Build output
+**/target
+angular-ui/node_modules
+angular-ui/dist
+angular-ui/.angular
+
+# Editors / OS
+.idea
+*.iml
+.vscode
+.DS_Store
+
+# Env / secrets
+.env
+.env.local
+*.env.local
+
+# Docs and misc project files not needed inside images
+roadmap.md
+docs
+CONTRIBUTING.md
+LICENSE
+*.log
+run.log

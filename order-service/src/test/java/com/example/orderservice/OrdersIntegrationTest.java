@@ -1,5 +1,6 @@
 package com.example.orderservice;
 
+import com.example.common.test.KeycloakTestContainer;
 import com.example.orderservice.dto.OrderRequest;
 import com.example.orderservice.dto.OrderResponse;
 import org.junit.jupiter.api.BeforeEach;
@@ -8,27 +9,31 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.RestClient;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.util.Map;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-    "spring.jpa.hibernate.ddl-auto=create-drop"
-})
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
 class OrdersIntegrationTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16");
+
+    // Shared singleton (see KeycloakTestContainer's Javadoc) - started here instead of relying
+    // on @Container/@Testcontainers so it is not restarted per test class.
+    private static final KeycloakTestContainer keycloak = KeycloakTestContainer.getInstance();
+
+    @DynamicPropertySource
+    static void keycloakProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.security.oauth2.resourceserver.jwt.issuer-uri", keycloak::issuerUri);
+    }
 
     @LocalServerPort
     private int port;
@@ -44,32 +49,14 @@ class OrdersIntegrationTest {
 
     @Test
     void testOrderLifecycleWithKeycloakToken() {
-        // 1. Get Token from Keycloak
-        String tokenUrl = "http://localhost:8080/realms/my-realm/protocol/openid-connect/token";
-        
-        RestClient restClient = RestClient.create();
-
-        MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
-        formData.add("client_id", "bff-client");
-        formData.add("client_secret", "mysecret");
-        formData.add("grant_type", "password");
-        formData.add("username", "user");
-        formData.add("password", "password");
-
-        Map tokenResponse = restClient.post()
-                .uri(tokenUrl)
-                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                .body(formData)
-                .retrieve()
-                .body(Map.class);
-        
-        assertThat(tokenResponse).isNotNull();
-        String accessToken = (String) tokenResponse.get("access_token");
+        // 1. Get Token from the containerized Keycloak (hermetic - no dependency on a locally
+        // running Keycloak instance). bff-client no longer allows the password grant
+        // (directAccessGrantsEnabled=false); test-client is dedicated to tests.
+        String accessToken = keycloak.passwordGrantToken("user", "password");
         assertThat(accessToken).isNotNull();
 
         // 2. Create Order
-        OrderRequest orderRequest = new OrderRequest();
-        orderRequest.setOrderNumber("ORD-999");
+        OrderRequest orderRequest = new OrderRequest("ORD-999");
 
         webTestClient.post().uri("/api")
                 .header("Authorization", "Bearer " + accessToken)
@@ -80,11 +67,12 @@ class OrdersIntegrationTest {
                 .expectBody(OrderResponse.class)
                 .value(order -> {
                     assert order != null;
-                    assertThat(order.getOrderNumber()).isEqualTo("ORD-999");
-                    assertThat(order.getCreatedBy()).isNotNull();
+                    assertThat(order.orderNumber()).isEqualTo("ORD-999");
+                    assertThat(order.createdBy()).isNotNull();
                 });
 
-        // 3. Get Orders (Paginated)
+        // 3. Get Orders (Paginated) - PagedModel shape: { content: [...], page: { size, number,
+        // totalElements, totalPages } }
         webTestClient.get().uri("/api")
                 .header("Authorization", "Bearer " + accessToken)
                 .exchange()
@@ -92,6 +80,6 @@ class OrdersIntegrationTest {
                 .expectBody()
                 .jsonPath("$.content").isArray()
                 .jsonPath("$.content[0].orderNumber").isEqualTo("ORD-999")
-                .jsonPath("$.totalElements").value(total -> assertThat((Integer) total).isGreaterThanOrEqualTo(1));
+                .jsonPath("$.page.totalElements").value(total -> assertThat((Integer) total).isGreaterThanOrEqualTo(1));
     }
 }
