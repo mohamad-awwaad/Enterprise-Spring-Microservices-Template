@@ -1,5 +1,6 @@
 package com.example.bff.filter;
 
+import com.example.bff.service.RefreshLockService;
 import com.example.bff.service.SessionRedisService;
 import com.example.bff.session.BffSession;
 import com.example.bff.util.JwtUtils;
@@ -70,18 +71,21 @@ public class TokenRefreshFilter extends OncePerRequestFilter {
     private final JwtUtils jwtUtils;
     private final RestClient restClient;
     private final ClientRegistrationRepository clientRegistrationRepository;
+    private final RefreshLockService refreshLockService;
 
     public TokenRefreshFilter(SessionRedisService sessionService,
                               JwtUtils jwtUtils,
                               RestClient.Builder restClientBuilder,
                               ClientRegistrationRepository clientRegistrationRepository,
-                              @org.springframework.beans.factory.annotation.Value("${bff.token.refresh-buffer-seconds}") long refreshBufferSeconds) {
+                              @org.springframework.beans.factory.annotation.Value("${bff.token.refresh-buffer-seconds}") long refreshBufferSeconds,
+                              RefreshLockService refreshLockService) {
         this.sessionService = sessionService;
         this.jwtUtils = jwtUtils;
         // Using Builder allows us to inject a mock/custom builder in tests
         this.restClient = restClientBuilder.build();
         this.clientRegistrationRepository = clientRegistrationRepository;
         this.refreshBufferSeconds = refreshBufferSeconds;
+        this.refreshLockService = refreshLockService;
     }
 
     @Override
@@ -132,24 +136,65 @@ public class TokenRefreshFilter extends OncePerRequestFilter {
             long secondsRemaining = accessTokenExpiresAt.getEpochSecond() - Instant.now().getEpochSecond();
 
             if (secondsRemaining < refreshBufferSeconds) {
-                try {
-                    // 5. Execute Manual Refresh via Keycloak
-                    refreshTokens(session, jti);
-                } catch (HttpClientErrorException e) {
-                    // Keycloak rejected the refresh (e.g. invalid_grant because the refresh
-                    // token was revoked or expired). The stored session can never be refreshed
-                    // again, so delete it now: the proxy will then return 401 for this and any
-                    // subsequent request instead of forwarding a dead access token downstream.
-                    log.warn("Proactive Token Refresh rejected by Keycloak for jti={}, deleting session: {}", jti, e.getMessage());
-                    sessionService.delete(jti);
-                } catch (Exception e) {
-                    log.error("Proactive Token Refresh failed: {}", e.getMessage());
-                    // We continue the chain; the downstream service will likely return 401 if it's truly expired.
+                // 5. Race-safe refresh: only one request (across every BFF instance) may ever
+                // actually call Keycloak's token endpoint for a given jti at a time. This
+                // matters once refresh token rotation is enabled in the realm - a refresh token
+                // can only be redeemed once, so two concurrent requests refreshing the same
+                // session would otherwise have the loser's call rejected with invalid_grant.
+                if (refreshLockService.tryAcquire(jti)) {
+                    try {
+                        refreshTokens(session, jti);
+                    } catch (HttpClientErrorException e) {
+                        handleRefreshRejected(session, jti, e);
+                    } catch (Exception e) {
+                        log.error("Proactive Token Refresh failed: {}", e.getMessage());
+                        // We continue the chain; the downstream service will likely return 401 if it's truly expired.
+                    } finally {
+                        refreshLockService.release(jti);
+                    }
+                } else {
+                    // Another request (possibly on another instance) is already refreshing this
+                    // session. Wait briefly for it to finish instead of racing it, then reload
+                    // the session so we pick up whatever it left behind: fresh tokens if the
+                    // refresh succeeded, or nothing if it failed and deleted the session (in
+                    // which case the proxy below behaves exactly as it does today for a missing
+                    // session - 401).
+                    log.debug("Token refresh already in progress for jti={}; waiting for it to finish", jti);
+                    refreshLockService.waitForRelease(jti);
+                    if (sessionService.load(jti) == null) {
+                        log.warn("Session jti={} is gone after waiting for a concurrent refresh (it likely failed)", jti);
+                    }
                 }
             }
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Handles Keycloak rejecting a refresh with {@code invalid_grant} (refresh token revoked,
+     * expired, or - now that the realm has refresh token rotation enabled - already redeemed).
+     * <p>
+     * Holding {@code refreshLockService}'s lock should make it impossible for two BFF requests
+     * to race each other to redeem the same refresh token, but the lock's TTL is a short safety
+     * net, not a guarantee: if this call is unusually slow, another node could acquire the lock
+     * after ours expired and refresh (and rotate) the token first. Reload the session before
+     * deleting it - if it has changed since we started, another node already replaced it with
+     * fresh tokens, and we were simply the loser of that race rather than looking at a genuinely
+     * dead session.
+     */
+    private void handleRefreshRejected(BffSession attemptedSession, String jti, HttpClientErrorException e) {
+        BffSession current = sessionService.load(jti);
+        if (current != null && !current.refreshToken().equals(attemptedSession.refreshToken())) {
+            log.info("Refresh token for jti={} was already rotated by another node; keeping its newer session", jti);
+            return;
+        }
+
+        // The stored session can never be refreshed again, so delete it now: the proxy will
+        // then return 401 for this and any subsequent request instead of forwarding a dead
+        // access token downstream.
+        log.warn("Proactive Token Refresh rejected by Keycloak for jti={}, deleting session: {}", jti, e.getMessage());
+        sessionService.delete(jti);
     }
 
     private void refreshTokens(BffSession session, String jti) {

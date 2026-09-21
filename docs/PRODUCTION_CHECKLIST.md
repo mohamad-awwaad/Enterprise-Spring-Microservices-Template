@@ -12,14 +12,17 @@ This document outlines the specific infrastructure configurations and policy aud
       start under `prod` without one (fail-fast), and otherwise falls back to an ephemeral
       in-memory key that does not survive a restart (fine for dev, never for prod).
     - Generate with: `openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:2048`
-- [ ] **Redis AUTH & TLS:**
+- [x] **Redis AUTH:**
     - The BFF's `BffSession` records (access/refresh/ID token values, keyed by `bff:session:<jti>`)
       and the `JSESSIONID` Spring Session both live in Redis - anyone who can read that Redis
-      instance can read live user tokens. Require authentication (`requirepass` / Redis ACLs, or
-      a managed Redis's IAM/AUTH mechanism) and enable TLS for connections to Redis, especially
-      when it is reachable outside the local Docker network.
-    - Configure `spring.data.redis.password` (and `spring.data.redis.ssl.enabled=true` where
-      supported) to match.
+      instance can read live user tokens. `compose.yaml`'s `redis` service now starts with
+      `--requirepass ${REDIS_PASSWORD}`, and the bff and gateway containers (rate limiter +
+      Spring Session share the same Boot-autoconfigured connection factory) are given the same
+      `REDIS_PASSWORD`. Change the default password (`REDIS_PASSWORD` in `.env`) before deploying.
+    - [ ] **TLS:** still off by default (`REDIS_SSL_ENABLED=false`). Set `REDIS_SSL_ENABLED=true`
+      (bff and gateway both read `spring.data.redis.ssl.enabled` from it) when Redis is reachable
+      outside a trusted private network - a managed Redis offering (AWS ElastiCache, Azure Cache
+      for Redis, etc.) with TLS enabled is recommended over self-hosting Redis for production.
 - [ ] **Encryption at Rest for Session Data (optional, defense in depth):**
     - `BffSession` is stored as plain JSON in Redis (see `docs/dual_session_strategy.md`) - no
       longer JDK-serialized, but also not encrypted. For an additional layer beyond Redis AUTH/TLS

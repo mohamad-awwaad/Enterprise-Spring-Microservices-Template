@@ -24,12 +24,13 @@ services:
   redis:
     image: redis:8-alpine
     container_name: redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-redis_password}", "--appendonly", "yes"]
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_password}", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -232,6 +233,8 @@ services:
       API_AUDIENCE: ${API_AUDIENCE:-template-api}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_password}
+      REDIS_SSL_ENABLED: ${REDIS_SSL_ENABLED:-false}
       PROFILE_SERVICE_URL: http://profile-service:8082
       ORDER_SERVICE_URL: http://order-service:8083
       ADMIN_SERVICE_URL: http://keycloak-admin-service:8084
@@ -375,6 +378,8 @@ services:
       KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/${KEYCLOAK_REALM:-my-realm}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_password}
+      REDIS_SSL_ENABLED: ${REDIS_SSL_ENABLED:-false}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-bff-client}
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-mysecret}
       BFF_JWT_ISSUER: ${BFF_JWT_ISSUER:-https://bff.example.com}

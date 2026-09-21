@@ -69,6 +69,12 @@ The record is serialized to plain JSON (Spring Data Redis 4's Jackson-3-backed
 token endpoint, instead of reading them off the (no longer present) `ClientRegistration` that used
 to travel with the stored client.
 
+Because the realm rotates refresh tokens on every use, `session.refreshToken()` changes on every
+proactive refresh, not just the access token - a second request must never redeem the token value
+it read before a concurrent refresh replaced it. `TokenRefreshFilter` guards against this with a
+short-lived per-`jti` Redis lock (see `docs/proactive_token_refresh.md` for how it works); only
+the request holding the lock calls Keycloak, everyone else waits and then re-reads the session.
+
 The `JSESSIONID` session (see above) remains a standard Spring Session, itself backed by Redis via
 `spring-session-data-redis` - it is unaffected by this change.
 

@@ -16,6 +16,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.security.web.util.matcher.RequestHeaderRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.http.HttpStatus;
@@ -60,6 +61,19 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            /*
+             * Security headers. The BFF never serves an HTML page of its own - only JSON
+             * (proxy responses, /bff/user) and redirects (OAuth2 login, /bff/logout) - so it
+             * can take the strictest possible Content-Security-Policy: nothing is allowed to
+             * load, and it must never be framed. Neither directive affects the OAuth2/Keycloak
+             * redirects or the CSRF cookie: CSP only governs what a *loaded document* may do,
+             * and a 302 response with a Location header carries no document to constrain.
+             */
+            .headers(headers -> headers
+                .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'"))
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                .frameOptions(frame -> frame.deny())
+            )
             .addFilterBefore(tokenRefreshFilter, UsernamePasswordAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
                 /*
