@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, ChangeDetectionStrategy } from '@angular/core';
 
 import { FormsModule } from '@angular/forms';
 import { MatCardModule } from '@angular/material/card';
@@ -108,6 +108,7 @@ import { ConfirmDialogComponent } from './confirm-dialog.component';
       </mat-card>
     }
   `,
+    changeDetection: ChangeDetectionStrategy.Eager,
     styles: [`
     .loading-container {
       display: flex;

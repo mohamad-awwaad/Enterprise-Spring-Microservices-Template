@@ -1,4 +1,5 @@
-import { Component, inject, ViewChild } from '@angular/core';
+import { Component, inject, ViewChild, ChangeDetectionStrategy } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 
 import { RouterModule, RouterOutlet } from '@angular/router';
 import { MatSidenavModule, MatSidenav } from '@angular/material/sidenav';
@@ -6,6 +7,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatListModule } from '@angular/material/list';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
+import { map } from 'rxjs';
 import { BreakpointObserver, Breakpoints } from '@angular/cdk/layout';
 import { AuthService } from '../../../core/services/auth.service';
 
@@ -22,7 +24,7 @@ import { AuthService } from '../../../core/services/auth.service';
 ],
     template: `
     <mat-sidenav-container class="sidenav-container">
-      <mat-sidenav #sidenav [mode]="isMobile ? 'over' : 'side'" [opened]="!isMobile" class="sidenav">
+      <mat-sidenav #sidenav [mode]="isMobile() ? 'over' : 'side'" [opened]="!isMobile()" class="sidenav">
         <mat-toolbar color="primary">
           <span>SEC Microservice</span>
         </mat-toolbar>
@@ -44,8 +46,8 @@ import { AuthService } from '../../../core/services/auth.service';
 
       <mat-sidenav-content>
         <mat-toolbar color="primary">
-          @if (isMobile) {
-            <button mat-icon-button (click)="sidenav.toggle()">
+          @if (isMobile()) {
+            <button mat-icon-button (click)="sidenav.toggle()" aria-label="Toggle navigation menu">
               <mat-icon>menu</mat-icon>
             </button>
           }
@@ -54,7 +56,7 @@ import { AuthService } from '../../../core/services/auth.service';
           @if (authService.currentUser(); as user) {
             <span class="user-name">{{ user.preferred_username }}</span>
           }
-          <button mat-icon-button (click)="logout()" matTooltip="Logout">
+          <button mat-icon-button (click)="logout()" matTooltip="Logout" aria-label="Logout">
             <mat-icon>logout</mat-icon>
           </button>
         </mat-toolbar>
@@ -65,6 +67,7 @@ import { AuthService } from '../../../core/services/auth.service';
       </mat-sidenav-content>
     </mat-sidenav-container>
   `,
+    changeDetection: ChangeDetectionStrategy.Eager,
     styles: [`
     .sidenav-container {
       height: 100vh;
@@ -102,16 +105,13 @@ export class MainLayoutComponent {
   authService = inject(AuthService);
   private breakpointObserver = inject(BreakpointObserver);
 
-  isMobile = false;
-
-  constructor() {
-    this.breakpointObserver.observe([Breakpoints.Handset]).subscribe(result => {
-      this.isMobile = result.matches;
-    });
-  }
+  isMobile = toSignal(
+    this.breakpointObserver.observe([Breakpoints.Handset]).pipe(map(result => result.matches)),
+    { initialValue: false }
+  );
 
   closeIfMobile(): void {
-    if (this.isMobile) {
+    if (this.isMobile()) {
       this.sidenav.close();
     }
   }

@@ -1,6 +1,6 @@
 # Enterprise Spring Microservices Template
 
-A production-ready secure microservices template using **Spring Boot 4.x**, **Keycloak**, and **Angular 21**. Designed to support both Web (BFF pattern) and Mobile (direct JWT) applications with enterprise-grade security.
+A production-ready secure microservices template using **Spring Boot 4.x**, **Keycloak**, and **Angular 22**. Designed to support both Web (BFF pattern) and Mobile (direct JWT) applications with enterprise-grade security.
 
 ---
 
@@ -33,7 +33,7 @@ A production-ready secure microservices template using **Spring Boot 4.x**, **Ke
 - **Prometheus Metrics** - JVM, HTTP, and circuit breaker metrics with Grafana dashboards
 - **Robust API Error Handling** - Jakarta Validation on DTOs with standardized [RFC 9457 (formerly 7807) Problem Details](https://datatracker.ietf.org/doc/html/rfc9457) responses.
 - **OpenAPI Documentation** - Swagger UI with Gateway aggregation
-- **Angular 21 UI** - Modern standalone components with Angular Material
+- **Angular 22 UI** - Modern standalone components with Angular Material
 - **Keycloak Integration** - Enterprise identity provider with user management
 - **Testcontainers** - Reliable integration testing with ephemeral databases
 
@@ -86,8 +86,11 @@ A production-ready secure microservices template using **Spring Boot 4.x**, **Ke
 
 - Docker & Docker Compose
 - Java 25
-- Node.js 18+ (for Angular UI)
+- Node.js 24+ (for Angular UI, Angular 22)
 - Maven (or just use the bundled `./mvnw` wrapper - no local Maven install needed)
+- [Playwright](https://playwright.dev/) browsers, only needed for the Angular E2E suite - run
+  `npx playwright install chromium` once inside `angular-ui/` (see
+  [Frontend tests](#frontend-tests))
 
 ### 1. Start Backend Services
 
@@ -190,7 +193,7 @@ Keycloak, the databases, Redis and the observability stack, same as before.
 
 ```
 root_folder/
-├── angular-ui/                 # Angular 21 Web Application
+├── angular-ui/                 # Angular 22 Web Application
 │   ├── src/app/
 │   │   ├── core/               # Auth service, interceptors, guards
 │   │   ├── features/           # Login, Dashboard, Profile, Orders
@@ -247,7 +250,7 @@ common-core (zero dependencies)
 
 | Service             | Port | Management Port | Technology                     | Purpose                                    |
 |---------------------|------|------------------|--------------------------------|--------------------------------------------|
-| **Angular UI**      | 4200 | -                | Angular 21, Material           | Web application                            |
+| **Angular UI**      | 4200 | -                | Angular 22, Material           | Web application                            |
 | **BFF**             | 8081 | 9081             | Spring Boot 4.x (MVC)          | OAuth2 client, session management          |
 | **Gateway**         | 8888 | 9888             | Spring Cloud Gateway (WebFlux) | API routing, JWT validation, rate limiting |
 | **Profile Service** | 8082 | 9082             | Spring Boot 4.x                | User profile CRUD                          |
@@ -589,10 +592,13 @@ Or build/test the Java services directly with the bundled Maven wrapper (no loca
 install required):
 
 ```bash
-./mvnw -DskipTests package                             # Build all services
-./mvnw test                                             # Run all tests (needs Keycloak running)
-./mvnw test -Dtest.excludedGroups=requires-keycloak     # Run tests that don't need Keycloak
+./mvnw -DskipTests package     # Build all services
+./mvnw test                    # Run all tests (needs Docker only)
 ```
+
+Integration tests are self-contained: the `common-test` module starts Keycloak (with the realm
+import from `keycloak/realm-config`), Redis and PostgreSQL as Testcontainers, so no running
+stack is needed. Each module's suite adds roughly 15 seconds for the Keycloak container.
 
 See [Run everything in Docker](#run-everything-in-docker) to run the whole stack, apps
 included, in containers instead.
@@ -607,9 +613,9 @@ on first start (`spring.flyway.baseline-on-migrate=true`).
 
 ### CI and Dependency Updates
 
-`.gitlab-ci.yml` builds the Java services and the Angular app, runs the tests that do not need
-a live Keycloak (Testcontainers via Docker-in-Docker) and, on `main` and tags, builds the Docker
-images. `renovate.json` keeps Maven, npm, Docker image and CI image versions up to date.
+`.gitlab-ci.yml` builds the Java services and the Angular app (with its unit tests), runs the
+Java tests with Testcontainers via Docker-in-Docker, offers a manual Playwright E2E job and, on
+`main` and tags, builds the Docker images. `renovate.json` keeps Maven, npm, Docker image and CI image versions up to date.
 
 ### Angular Development
 
@@ -620,11 +626,28 @@ npm run build                  # Production build
 npm test                       # Run tests
 ```
 
+### Frontend tests
+
+`angular-ui` has two separate test suites:
+
+- **Unit tests** (`npm test`, from `angular-ui/`) run the component/service specs with Vitest
+  (via `@angular/build:unit-test`), headless and non-interactively - safe to call from CI as-is.
+  They mock the backend with `provideHttpClientTesting()`, so nothing else needs to be running.
+- **End-to-end tests** (`npm run e2e`, from `angular-ui/`) run with Playwright against a real,
+  already-running stack. Before calling it, the following must be up:
+  - Angular dev server on http://localhost:4200 (`npm start`)
+  - BFF on http://localhost:8081, Gateway, Keycloak (`my-realm`) and the profile/order services
+  - The Playwright browser itself: run `npx playwright install chromium` once
+
+  `E2E_BASE_URL` overrides the app URL (defaults to `http://localhost:4200`), and
+  `E2E_KEYCLOAK_USER` / `E2E_KEYCLOAK_PASSWORD` override the Keycloak test credentials (default
+  to the `user` / `password` test account).
+
 ### Tech Stack
 
 | Layer         | Technology                                           |
 |---------------|------------------------------------------------------|
-| Frontend      | Angular 21, Angular Material, RxJS, Signals          |
+| Frontend      | Angular 22, Angular Material, RxJS, Signals          |
 | BFF           | Spring Boot 4.x (MVC), Spring Security OAuth2 Client |
 | Gateway       | Spring Cloud Gateway WebFlux (Spring Boot 4.x)       |
 | Services      | Spring Boot 4.x (MVC), Spring Data JPA               |
@@ -636,7 +659,7 @@ npm test                       # Run tests
 | Logging       | Logback, Logstash Encoder, Loki                      |
 | Visualization | Grafana (dashboards for metrics, logs, traces)       |
 | Resilience    | Resilience4j (Circuit Breaker)                       |
-| Testing       | JUnit 5, Testcontainers, Jasmine                     |
+| Testing       | JUnit 5, Testcontainers, Vitest, Playwright                     |
 
 ---
 

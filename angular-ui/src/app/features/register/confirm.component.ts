@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, ChangeDetectionStrategy } from '@angular/core';
 
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
@@ -53,6 +53,7 @@ import { RegisterService } from './register.service';
       </mat-card>
     </div>
   `,
+    changeDetection: ChangeDetectionStrategy.Eager,
     styles: [`
     .confirm-container {
       display: flex;

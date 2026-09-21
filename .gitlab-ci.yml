@@ -30,11 +30,39 @@ frontend:
   script:
     - cd angular-ui
     - npm ci
+    - npm test
     - npm run build
   artifacts:
     paths:
       - angular-ui/dist
     expire_in: 1 day
+
+# Browser end-to-end tests (Playwright). They need a running stack (Angular UI, BFF, gateway,
+# services, Keycloak with the test user), so this job is manual: set E2E_BASE_URL to an
+# environment where the stack is reachable, or run `npm run e2e` locally against
+# `docker compose --profile apps up`.
+frontend-e2e:
+  stage: test
+  image: mcr.microsoft.com/playwright:v1.63.0-noble
+  needs: ["frontend"]
+  when: manual
+  allow_failure: true
+  variables:
+    E2E_BASE_URL: "http://localhost:4200"
+  cache:
+    key: npm-cache
+    paths:
+      - angular-ui/node_modules
+  script:
+    - cd angular-ui
+    - npm ci
+    - npm run e2e
+  artifacts:
+    when: always
+    paths:
+      - angular-ui/playwright-report
+      - angular-ui/test-results
+    expire_in: 3 days
 
 test:
   stage: test
@@ -50,7 +78,7 @@ test:
     paths:
       - .m2/repository
   script:
-    - ./mvnw -B -ntp verify -Dtest.excludedGroups=requires-keycloak
+    - ./mvnw -B -ntp verify
   artifacts:
     when: always
     reports:

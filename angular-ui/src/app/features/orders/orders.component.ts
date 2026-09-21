@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule, DatePipe } from '@angular/common';
 import { MatCardModule } from '@angular/material/card';
 import { MatTableModule } from '@angular/material/table';
@@ -87,6 +87,7 @@ import { Order } from './order.model';
       </mat-card>
     }
   `,
+    changeDetection: ChangeDetectionStrategy.Eager,
     styles: [`
     .header {
       display: flex;

@@ -19,12 +19,13 @@ This document outlines the coding tasks, features, and configurations to be impl
     - Added Loki for log aggregation and Grafana for visualization.
     - Enable with: `--spring.profiles.active=loki` or `SPRING_PROFILES_ACTIVE=loki`.
 - [x] **Grafana Dashboards:**
-    - Added Prometheus for metrics collection (scrapes all services at `/actuator/prometheus`).
+    - Added Prometheus for metrics collection (scrapes all services at `/actuator/prometheus` on their management ports).
     - Added `micrometer-registry-prometheus` dependency to all services.
     - Provisioned Spring Boot Services dashboard with HTTP requests, JVM metrics, circuit breakers, and system metrics.
     - Access Grafana at http://localhost:3000 (admin/admin), Prometheus at http://localhost:9090.
 - [x] **Health Monitoring (Actuator):**
     - Added Spring Boot Actuator to all services and exposed health/info/metrics endpoints.
+    - Actuator is served on a separate management port per service (service port + 1000) with liveness/readiness probe groups.
 
 ## 3. Security Features
 
@@ -38,7 +39,7 @@ This document outlines the coding tasks, features, and configurations to be impl
 ## 4. API Quality & Documentation
 
 - [x] **Global Error Handling:**
-    - Implemented `GlobalExceptionHandler` in `common-web` providing RFC 7807 Problem Details for consistent error responses.
+    - Implemented `GlobalExceptionHandler` in `common-web` providing RFC 9457 Problem Details for consistent error responses.
 - [x] **Input Validation:**
     - Added `spring-boot-starter-validation` and applied `@Valid` annotations to all DTOs and Controllers.
 - [x] **API Documentation:**
@@ -66,3 +67,18 @@ This document outlines the coding tasks, features, and configurations to be impl
     - Implemented token validation and confirmation UI.
 - [x] **Login Integration:**
     - Integrated registration flow with login page.
+
+## 8. Build, Tests & CI
+
+- [x] **Spring Boot 4.1 upgrade:**
+    - All services on Spring Boot 4.1.x / Spring Cloud 2025.1.x; gateway on Spring Cloud Gateway Server WebFlux.
+- [x] **Database migrations:**
+    - Flyway for `profile-service` and `order-service`, Hibernate only validates the schema.
+- [x] **Docker:**
+    - One multi-stage `Dockerfile` for the Java services, nginx image for the Angular UI, single `compose.yaml` (infra by default, full stack with `--profile apps`).
+- [x] **CI:**
+    - GitLab CI pipeline (build, frontend, Testcontainers tests, image build), Maven wrapper, Renovate.
+- [x] **Hermetic integration tests:**
+    - `common-test` module with Keycloak (realm import) and Redis Testcontainers; no live Keycloak needed. Gateway and keycloak-admin-service have tests.
+- [x] **Frontend tests:**
+    - Vitest component/service specs and Playwright end-to-end tests (login, profile, orders, logout).
