@@ -26,6 +26,7 @@
         <module>common-security</module>
         <module>common-test</module>
         <module>dependencies-bom</module>
+        <module>service-parent</module>
         <module>bff</module>
         <module>gateway</module>
         <module>profile-service</module>

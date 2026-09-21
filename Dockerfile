@@ -23,6 +23,8 @@ COPY common-core/pom.xml common-core/pom.xml
 COPY common-web/pom.xml common-web/pom.xml
 COPY common-security/pom.xml common-security/pom.xml
 COPY dependencies-bom/pom.xml dependencies-bom/pom.xml
+COPY service-parent/pom.xml service-parent/pom.xml
+COPY common-test/pom.xml common-test/pom.xml
 COPY bff/pom.xml bff/pom.xml
 COPY gateway/pom.xml gateway/pom.xml
 COPY profile-service/pom.xml profile-service/pom.xml
@@ -33,6 +35,7 @@ COPY keycloak-admin-service/pom.xml keycloak-admin-service/pom.xml
 COPY common-core/src common-core/src
 COPY common-web/src common-web/src
 COPY common-security/src common-security/src
+COPY common-test/src common-test/src
 COPY bff/src bff/src
 COPY gateway/src gateway/src
 COPY profile-service/src profile-service/src

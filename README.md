@@ -209,9 +209,11 @@ root_folder/
 ├── common-core/                # Shared constants and utilities (Zero dependencies)
 ├── common-web/                 # Shared web components (Exception handling)
 ├── common-security/            # Shared security config (Resource Server setup)
+├── common-test/                # Testcontainers helpers (Keycloak, Redis) for module tests
 ├── dependencies-bom/           # Dependency version management
 ├── docker/                     # Prometheus/Grafana provisioning config
 ├── docs/                       # Architecture documentation
+├── service-parent/             # Parent POM for the 4 servlet services
 ├── Dockerfile                  # Shared multi-stage build for all 5 Java services
 ├── compose.yaml                # Infra (default) + apps (--profile apps) stack
 ├── mvnw / mvnw.cmd              # Maven wrapper - no local Maven install needed
@@ -243,6 +245,24 @@ common-core (zero dependencies)
 ```
 
 > **Note:** Gateway shares the parent POM but doesn't use the common-* shared libraries, since those are servlet-based and the Gateway runs on WebFlux.
+
+Maven POM layout:
+
+```
+microservices-parent (root)      versions only: Boot parent + dependencies-bom, no dependencies
+    ├── common-core / common-web / common-security / common-test   declare exactly what they use
+    ├── gateway                                                    WebFlux, declares its own stack
+    └── service-parent            shared by the servlet services: web, security, resource server,
+            │                     actuator, lombok, test starters, common-test (+ Lombok build setup)
+            ├── bff
+            ├── profile-service
+            ├── order-service
+            └── keycloak-admin-service
+```
+
+`common-security` also supplies the resource-server defaults (`issuer-uri`, `audiences`) through an
+`EnvironmentPostProcessor` (`ResourceServerDefaultsEnvironmentPostProcessor`), so services only set
+`KEYCLOAK_ISSUER_URI` / `API_AUDIENCE`, or override the keys in their own properties when they differ.
 
 ---
 
