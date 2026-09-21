@@ -1,5 +1,6 @@
 package com.example.profileservice;
 
+import com.example.common.test.KeycloakTestContainer;
 import com.example.profileservice.dto.SelfRegistrationRequest;
 import com.example.profileservice.model.Gender;
 import com.example.profileservice.repository.PendingRegistrationEntityRepository;
@@ -7,7 +8,6 @@ import com.example.profileservice.repository.UserProfileEntityRepository;
 import com.example.profileservice.service.EmailService;
 import com.example.profileservice.service.KeycloakAdminClient;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +16,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -39,12 +41,22 @@ import static org.mockito.Mockito.*;
                 "app.registration.confirmation-base-url=http://localhost:4200/confirm"
 })
 @Testcontainers
-@Tag("requires-keycloak")
 class RegistrationIntegrationTest {
 
         @Container
         @ServiceConnection
         static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16");
+
+        // The resource-server auto-configuration resolves the JWT issuer's OIDC discovery
+        // document eagerly at context startup (JwtDecoders.fromIssuerLocation), so a reachable
+        // Keycloak is required even though none of the tests below call an authenticated
+        // endpoint or fetch a token. Shared singleton (see KeycloakTestContainer's Javadoc).
+        private static final KeycloakTestContainer keycloak = KeycloakTestContainer.getInstance();
+
+        @DynamicPropertySource
+        static void keycloakProperties(DynamicPropertyRegistry registry) {
+                registry.add("spring.security.oauth2.resourceserver.jwt.issuer-uri", keycloak::issuerUri);
+        }
 
         @AfterAll
         static void tearDown(@Autowired DataSource dataSource) {

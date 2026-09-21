@@ -76,6 +76,11 @@
             <artifactId>testcontainers-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>com.example</groupId>
+            <artifactId>common-test</artifactId>
+            <scope>test</scope>
+        </dependency>
 
     </dependencies>
 

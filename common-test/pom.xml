@@ -8,51 +8,41 @@
         <version>0.0.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
-    <artifactId>keycloak-admin-service</artifactId>
-    <name>keycloak-admin-service</name>
-    <description>Keycloak Admin Proxy Service</description>
+    <artifactId>common-test</artifactId>
+    <version>1.0.0</version>
+    <name>common-test</name>
+    <description>Shared Testcontainers helpers (Keycloak, Redis) for hermetic integration tests</description>
 
     <dependencies>
+        <!-- Testcontainers core: GenericContainer, Wait strategies, MountableFile. Version comes
+             from the Testcontainers BOM that spring-boot-dependencies imports. -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+        </dependency>
+        <!-- RestClient, used by KeycloakTestContainer's token helpers. Plain spring-web (not the
+             spring-boot-starter-restclient auto-configuration starter) is enough: this is a plain
+             library class, not a Spring bean, so there is no ApplicationContext to auto-configure. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-security</artifactId>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.keycloak</groupId>
-            <artifactId>keycloak-admin-client</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.example</groupId>
-            <artifactId>common-security</artifactId>
-        </dependency>
-
-        <!-- WebFlux is required for WebTestClient in tests -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.example</groupId>
-            <artifactId>common-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
     </dependencies>
 
     <build>
         <plugins>
+            <!-- Library module, not a runnable application: skip repackage like the other
+                 common-* modules. -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -18,6 +18,7 @@
         <resilience4j.version>2.4.0</resilience4j.version>
         <logstash-logback-encoder.version>9.0</logstash-logback-encoder.version>
         <loki-logback-appender.version>2.1.0</loki-logback-appender.version>
+        <commons-io.version>2.20.0</commons-io.version>
     </properties>
 
     <dependencyManagement>
@@ -66,6 +67,21 @@
                 <version>${keycloak-admin-client.version}</version>
             </dependency>
 
+            <!-- keycloak-admin-client pulls in resteasy-multipart-provider -> commons-io 2.11.0,
+                 shallower in the tree than (and so winning over, by Maven's nearest-wins rule)
+                 the commons-io 2.20.0 that Testcontainers' commons-compress needs for its
+                 MountableFile tar transfer (org.apache.commons.io.file.attribute.FileTimes,
+                 added in 2.12.0). Without this pin, any module that combines keycloak-admin-client
+                 with common-test silently fails to copy files into a container (a background
+                 thread swallows the NoClassDefFoundError) - see keycloak-admin-service's
+                 AdminControllerIntegrationTest, whose containerized Keycloak never received its
+                 realm-export.json and so never imported "my-realm". -->
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>${commons-io.version}</version>
+            </dependency>
+
             <!-- Nimbus JOSE JWT -->
             <dependency>
                 <groupId>com.nimbusds</groupId>
@@ -99,6 +115,11 @@
             <dependency>
                 <groupId>com.example</groupId>
                 <artifactId>common-security</artifactId>
+                <version>1.0.0</version>
+            </dependency>
+            <dependency>
+                <groupId>com.example</groupId>
+                <artifactId>common-test</artifactId>
                 <version>1.0.0</version>
             </dependency>
         </dependencies>

@@ -1,12 +1,20 @@
 package com.example.bff;
 
 import com.example.common.core.constant.SessionConstants;
+import com.example.common.test.KeycloakTestContainer;
+import com.example.common.test.RedisTestContainer;
 import com.example.bff.config.TestConfig;
 import com.example.bff.service.SessionRedisService;
 import com.example.bff.session.BffSession;
 import com.example.bff.util.JwtUtils;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import okhttp3.mockwebserver.Dispatcher;
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,33 +27,79 @@ import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.http.ResponseCookie;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.RestClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * Exercises the BFF's OAuth2 login gate and its {@code /bff/api/**} proxy, hermetically:
+ * <ul>
+ *   <li>a real (containerized) Keycloak issues the session's access token - see
+ *       {@link KeycloakTestContainer};</li>
+ *   <li>a real (containerized) Redis backs the session store - see {@link RedisTestContainer};</li>
+ *   <li>the downstream Gateway the BFF would normally proxy to is replaced by a
+ *       {@link MockWebServer} (see {@link #mockGateway}), since exercising the real Gateway and
+ *       profile-service is out of scope for a BFF-module test and would defeat hermeticity.</li>
+ * </ul>
+ */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(TestConfig.class)
-@Tag("requires-keycloak")
 class KeycloakIntegrationTest {
 
     private static final Logger log = LoggerFactory.getLogger(KeycloakIntegrationTest.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     // CSRF protection is enabled in all profiles (see SecurityConfig's SPA recipe), so write
     // requests must echo the token back as both a cookie and this header - exactly what
     // Angular's built-in XSRF interceptor does for real browser requests.
     private static final String CSRF_COOKIE_NAME = "XSRF-TOKEN";
     private static final String CSRF_HEADER_NAME = "X-XSRF-TOKEN";
+
+    private static final KeycloakTestContainer keycloak = KeycloakTestContainer.getInstance();
+    private static final RedisTestContainer redis = RedisTestContainer.getInstance();
+
+    /**
+     * Stands in for the Gateway the BFF proxies {@code /bff/api/**} to. A stateful
+     * {@link Dispatcher} (rather than a fixed {@code enqueue(...)} sequence) is used because the
+     * request order isn't fully deterministic across test methods: {@code @BeforeEach} itself
+     * makes a cleanup GET+DELETE call before every test.
+     */
+    private static final MockWebServer mockGateway = new MockWebServer();
+    private static final AtomicReference<byte[]> storedProfile = new AtomicReference<>();
+
+    static {
+        try {
+            mockGateway.setDispatcher(new ProfileGatewayDispatcher());
+            mockGateway.start();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to start mock gateway", e);
+        }
+    }
+
+    @DynamicPropertySource
+    static void dynamicProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.security.oauth2.client.provider.keycloak.issuer-uri", keycloak::issuerUri);
+        registry.add("spring.data.redis.host", redis::host);
+        registry.add("spring.data.redis.port", redis::port);
+        registry.add("bff.gateway.url", () -> "http://127.0.0.1:" + mockGateway.getPort());
+    }
+
+    @AfterAll
+    static void shutdownMockGateway() throws IOException {
+        mockGateway.shutdown();
+    }
 
     @LocalServerPort
     private int port;
@@ -63,7 +117,7 @@ class KeycloakIntegrationTest {
         webTestClient = WebTestClient.bindToServer()
                 .baseUrl("http://localhost:" + port)
                 .build();
-        
+
         cleanupProfile();
     }
 
@@ -80,7 +134,7 @@ class KeycloakIntegrationTest {
                     .header(CSRF_HEADER_NAME, csrfToken)
                     .exchange();
         } catch (Exception e) {
-            log.warn("Pre-test cleanup skipped: {}. This is normal if the profile service or Keycloak are not yet reachable, or if no profile exists.", e.getMessage());
+            log.warn("Pre-test cleanup skipped: {}. This is normal if no profile exists yet.", e.getMessage());
         }
     }
 
@@ -104,31 +158,11 @@ class KeycloakIntegrationTest {
     }
 
     private String obtainSessionJwt() {
-        // 1. Get Token from Keycloak
-        String tokenUrl = "http://localhost:8080/realms/my-realm/protocol/openid-connect/token";
-        
-        RestClient restClient = RestClient.create();
-
+        // 1. Get a real token from the containerized Keycloak.
         // bff-client no longer allows the password grant (directAccessGrantsEnabled=false -
         // it only performs the authorization_code flow in real usage); test-client is a
-        // confidential client dedicated to integration tests/curl and kept enabled for it.
-        MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
-        formData.add("client_id", "test-client");
-        formData.add("client_secret", "test-secret");
-        formData.add("grant_type", "password");
-        formData.add("username", "user");
-        formData.add("password", "password");
-
-        Map tokenResponse = restClient.post()
-                .uri(tokenUrl)
-                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                .body(formData)
-                .retrieve()
-                .body(Map.class);
-        
-        assertThat(tokenResponse).isNotNull();
-        String accessTokenValue = (String) tokenResponse.get("access_token");
-        String refreshTokenValue = (String) tokenResponse.get("refresh_token");
+        // confidential client dedicated to integration tests and kept enabled for it.
+        String accessTokenValue = keycloak.passwordGrantToken("user", "password");
 
         // 2. Create Session in Redis manually to simulate logged-in state
         String jti = UUID.randomUUID().toString();
@@ -137,7 +171,7 @@ class KeycloakIntegrationTest {
                 "user",
                 accessTokenValue,
                 Instant.now().plusSeconds(300),
-                refreshTokenValue,
+                "dummy-refresh-token",
                 "dummy-token-value",
                 Set.of("openid", "profile", "email"));
 
@@ -147,7 +181,7 @@ class KeycloakIntegrationTest {
         OidcIdToken idToken = new OidcIdToken("dummy-token-value", Instant.now(), Instant.now().plusSeconds(60), Map.of("sub", "user", "email", "user@example.com", "name", "User Name"));
         OidcUser oidcUser = new DefaultOidcUser(Collections.singleton(new SimpleGrantedAuthority("ROLE_USER")), idToken, "sub");
         OAuth2AuthenticationToken auth = new OAuth2AuthenticationToken(oidcUser, oidcUser.getAuthorities(), "keycloak");
-        
+
         return jwtUtils.issueSessionJwt(jti, auth);
     }
 
@@ -157,7 +191,7 @@ class KeycloakIntegrationTest {
         webTestClient.get().uri("/bff/user")
                 .exchange()
                 .expectStatus().isFound() // 302 Redirect
-                .expectHeader().value("Location", loc -> 
+                .expectHeader().value("Location", loc ->
                     assertThat(loc).contains("/oauth2/authorization/keycloak"));
     }
 
@@ -223,4 +257,50 @@ class KeycloakIntegrationTest {
                 .expectStatus().isNotFound();
     }
 
+    /**
+     * Fakes just enough of the Gateway -> profile-service round trip that the BFF proxies
+     * {@code /bff/api/profile} to: GET/POST/DELETE on {@code /profile} (and {@code /profile/},
+     * since the BFF forwards trailing slashes verbatim). State (does a profile currently
+     * "exist"?) is tracked across requests so the create/read/delete lifecycle the test drives
+     * behaves like a real backend would, regardless of call order across test methods.
+     */
+    private static final class ProfileGatewayDispatcher extends Dispatcher {
+        @Override
+        public MockResponse dispatch(RecordedRequest request) {
+            String path = request.getPath() == null ? "" : request.getPath();
+            if (!path.equals("/profile") && !path.equals("/profile/")) {
+                return new MockResponse().setResponseCode(404);
+            }
+            return switch (request.getMethod()) {
+                case "POST" -> {
+                    storedProfile.set(request.getBody().readByteArray());
+                    yield jsonResponse(200, storedProfile.get());
+                }
+                case "GET" -> {
+                    byte[] body = storedProfile.get();
+                    yield body != null ? jsonResponse(200, body) : new MockResponse().setResponseCode(404);
+                }
+                case "DELETE" -> {
+                    boolean existed = storedProfile.getAndSet(null) != null;
+                    yield new MockResponse().setResponseCode(existed ? 204 : 404);
+                }
+                default -> new MockResponse().setResponseCode(405);
+            };
+        }
+
+        private static MockResponse jsonResponse(int status, byte[] body) {
+            try {
+                // Round-trip through Jackson just to fail fast if a test ever sends something
+                // that isn't valid JSON, rather than silently echoing garbage back.
+                JsonNode ignored = OBJECT_MAPPER.readTree(body);
+                assertThat(ignored).isNotNull();
+            } catch (IOException e) {
+                throw new IllegalStateException("Expected JSON body", e);
+            }
+            return new MockResponse()
+                    .setResponseCode(status)
+                    .addHeader("Content-Type", "application/json")
+                    .setBody(new String(body, java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
 }
