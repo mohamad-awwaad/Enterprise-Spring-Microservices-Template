@@ -82,3 +82,17 @@ This document outlines the coding tasks, features, and configurations to be impl
     - `common-test` module with Keycloak (realm import) and Redis Testcontainers; no live Keycloak needed. Gateway and keycloak-admin-service have tests.
 - [x] **Frontend tests:**
     - Vitest component/service specs and Playwright end-to-end tests (login, profile, orders, logout).
+- [x] **Order auditing & optimistic locking:**
+    - `OrderEntity` uses `Instant` (not `LocalDateTime`) for `creationTime`/`updateTime`, Spring Data JPA auditing (`@CreatedDate`/`@LastModifiedDate`/`@CreatedBy`/`@LastModifiedBy` via a JWT-subject-backed `AuditorAware<String>` in `JpaAuditingConfig`) instead of the controller/service setting `createdBy`/`updatedBy` by hand, and `@Version` for optimistic locking. `V2__order_audit_columns.sql` migrates `creation_time`/`update_time` to `timestamp(6) with time zone` and adds `version bigint`.
+- [x] **Explicit paged responses:**
+    - `GET /orders` returns `PagedModel<OrderResponse>` explicitly (`new PagedModel<>(page)`) instead of a bare `Page`, so the `{ content, page: { size, number, totalElements, totalPages } }` shape doesn't depend on `spring.data.web.pageable.serialization-mode`. Angular's `Page<T>` model, `OrdersComponent` and `DashboardComponent` updated to match.
+- [x] **Java records for DTOs:**
+    - Request/response DTOs in `profile-service`, `order-service` and `keycloak-admin-service` converted from Lombok `@Data`/`@Builder` classes to records (entities untouched); Bean Validation annotations kept on record components, `@Builder` kept where a fluent builder was already in use.
+- [x] **SBOM & dependency scanning:**
+    - `cyclonedx-maven-plugin` (version from the Boot parent) generates a reactor-wide SBOM at `target/bom.json` on `package`. CI keeps it as a build artifact and runs a report-only `security` job (`aquasec/trivy:latest`, `allow_failure: true`) against the SBOM and the working tree, plus `npm audit` in the frontend job.
+- [x] **Token refresh lock & rotation:**
+    - Refresh-token rotation enabled in the realm; the BFF serializes concurrent refreshes per session with a short Redis lock (`RefreshLockService`).
+- [x] **Redis AUTH, security headers, virtual threads:**
+    - Redis requires a password (`REDIS_PASSWORD`, optional `REDIS_SSL_ENABLED`); CSP and related headers on the BFF and the Angular nginx image; virtual threads on the servlet services.
+- [x] **Parent POM cleanup:**
+    - No blanket dependencies in the root POM; each module declares what it uses and `common-core` has no dependencies.

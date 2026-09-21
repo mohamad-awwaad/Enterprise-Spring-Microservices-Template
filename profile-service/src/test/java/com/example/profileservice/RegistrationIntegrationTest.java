@@ -237,8 +237,8 @@ class RegistrationIntegrationTest {
 
         @Test
         void testMissingRequiredFields() {
-                SelfRegistrationRequest registration = new SelfRegistrationRequest();
                 // Email (the only @NotBlank field) is missing
+                SelfRegistrationRequest registration = new SelfRegistrationRequest(null, null, null, null, null, null);
 
                 webTestClient.post().uri("/api/public/register")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -248,12 +248,6 @@ class RegistrationIntegrationTest {
         }
 
         private SelfRegistrationRequest createValidRegistration(String email) {
-                SelfRegistrationRequest dto = new SelfRegistrationRequest();
-                dto.setEmail(email);
-                dto.setFirstName("Test");
-                dto.setLastName("User");
-                dto.setGender(Gender.MALE);
-                dto.setAge(25);
-                return dto;
+                return new SelfRegistrationRequest(email, "Test", "User", null, Gender.MALE, 25);
         }
 }

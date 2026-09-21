@@ -98,7 +98,7 @@ public class RegistrationService {
      * @param request Registration data
      */
     public void register(SelfRegistrationRequest request) {
-        String email = request.getEmail();
+        String email = request.email();
 
         if (userProfileRepository.findByEmail(email).isPresent()) {
             log.info("Registration requested for already-registered email {}; ignoring (no email sent).", email);

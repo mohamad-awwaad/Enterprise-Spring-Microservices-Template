@@ -56,8 +56,7 @@ class OrdersIntegrationTest {
         assertThat(accessToken).isNotNull();
 
         // 2. Create Order
-        OrderRequest orderRequest = new OrderRequest();
-        orderRequest.setOrderNumber("ORD-999");
+        OrderRequest orderRequest = new OrderRequest("ORD-999");
 
         webTestClient.post().uri("/api")
                 .header("Authorization", "Bearer " + accessToken)
@@ -68,11 +67,12 @@ class OrdersIntegrationTest {
                 .expectBody(OrderResponse.class)
                 .value(order -> {
                     assert order != null;
-                    assertThat(order.getOrderNumber()).isEqualTo("ORD-999");
-                    assertThat(order.getCreatedBy()).isNotNull();
+                    assertThat(order.orderNumber()).isEqualTo("ORD-999");
+                    assertThat(order.createdBy()).isNotNull();
                 });
 
-        // 3. Get Orders (Paginated)
+        // 3. Get Orders (Paginated) - PagedModel shape: { content: [...], page: { size, number,
+        // totalElements, totalPages } }
         webTestClient.get().uri("/api")
                 .header("Authorization", "Bearer " + accessToken)
                 .exchange()
@@ -80,6 +80,6 @@ class OrdersIntegrationTest {
                 .expectBody()
                 .jsonPath("$.content").isArray()
                 .jsonPath("$.content[0].orderNumber").isEqualTo("ORD-999")
-                .jsonPath("$.totalElements").value(total -> assertThat((Integer) total).isGreaterThanOrEqualTo(1));
+                .jsonPath("$.page.totalElements").value(total -> assertThat((Integer) total).isGreaterThanOrEqualTo(1));
     }
 }

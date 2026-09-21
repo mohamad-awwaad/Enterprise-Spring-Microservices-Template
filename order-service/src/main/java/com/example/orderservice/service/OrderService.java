@@ -18,12 +18,12 @@ public class OrderService {
     private final OrderRepository orderRepository;
 
     @Transactional
-    public OrderResponse createOrder(OrderRequest orderRequest, String userId) {
+    public OrderResponse createOrder(OrderRequest orderRequest) {
+        // createdBy/updatedBy/creationTime/updateTime are populated automatically by Spring
+        // Data JPA auditing (see JpaAuditingConfig) from the authenticated JWT's subject.
         OrderEntity order = OrderEntity.builder()
-                .orderNumber(orderRequest.getOrderNumber())
+                .orderNumber(orderRequest.orderNumber())
                 .status(OrderStatus.CREATED)
-                .createdBy(userId)
-                .updatedBy(userId)
                 .build();
         OrderEntity saved = orderRepository.save(order);
         return OrderResponse.fromEntity(saved);

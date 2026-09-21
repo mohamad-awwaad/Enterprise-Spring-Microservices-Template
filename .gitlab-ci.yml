@@ -18,6 +18,7 @@ build:
   artifacts:
     paths:
       - "**/target/*.jar"
+      - target/bom.json
     expire_in: 1 day
 
 frontend:
@@ -32,6 +33,7 @@ frontend:
     - npm ci
     - npm test
     - npm run build
+    - npm audit --omit=dev --audit-level=high || true
   artifacts:
     paths:
       - angular-ui/dist
@@ -84,6 +86,23 @@ test:
     reports:
       junit:
         - "**/target/surefire-reports/TEST-*.xml"
+
+# Report-only vulnerability/misconfig scanning. Never fails the pipeline (--exit-code 0 on
+# every trivy invocation, plus allow_failure) - it's meant to surface findings, not gate merges.
+security:
+  stage: test
+  image: aquasec/trivy:latest
+  needs: ["build"]
+  allow_failure: true
+  script:
+    - trivy sbom --exit-code 0 --severity HIGH,CRITICAL target/bom.json
+    - trivy sbom --exit-code 0 --severity HIGH,CRITICAL --format json --output trivy-report.json target/bom.json
+    - trivy fs --scanners vuln,misconfig --exit-code 0 .
+  artifacts:
+    when: always
+    paths:
+      - trivy-report.json
+    expire_in: 7 days
 
 docker-build:
   stage: package

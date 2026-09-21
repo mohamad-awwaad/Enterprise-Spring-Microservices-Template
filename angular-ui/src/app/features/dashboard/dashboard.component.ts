@@ -110,7 +110,7 @@ export class DashboardComponent implements OnInit {
 
     try {
       const orders = await this.ordersService.getOrders();
-      this.orderCount.set(orders.totalElements);
+      this.orderCount.set(orders.page.totalElements);
     } catch {
       this.orderCount.set(0);
     }

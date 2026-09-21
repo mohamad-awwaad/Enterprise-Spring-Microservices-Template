@@ -42,12 +42,12 @@ public class RegistrationPersistenceService {
     public void persist(SelfRegistrationRequest request, String confirmationToken, Instant tokenExpiry) {
         UserProfileEntity profile = UserProfileEntity.builder()
                 .userId(UUID.randomUUID().toString()) // Temporary, replaced after KC user creation
-                .firstName(request.getFirstName())
-                .lastName(request.getLastName())
-                .email(request.getEmail())
-                .mobileNumber(request.getMobileNumber())
-                .gender(request.getGender())
-                .age(request.getAge())
+                .firstName(request.firstName())
+                .lastName(request.lastName())
+                .email(request.email())
+                .mobileNumber(request.mobileNumber())
+                .gender(request.gender())
+                .age(request.age())
                 .enabled(false)
                 .build();
 

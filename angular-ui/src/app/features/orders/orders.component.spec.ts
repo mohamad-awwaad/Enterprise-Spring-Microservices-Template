@@ -9,16 +9,13 @@ import { Page } from './orders.service';
 import { Order } from './order.model';
 import { environment } from '../../../environments/environment';
 
-const EMPTY_PAGE: Page<Order> = { content: [], totalElements: 0, totalPages: 0, size: 20, number: 0 };
+const EMPTY_PAGE: Page<Order> = { content: [], page: { size: 20, number: 0, totalElements: 0, totalPages: 0 } };
 
 const ONE_ORDER_PAGE: Page<Order> = {
   content: [
     { id: 1, orderNumber: 'ORD-1', status: 'CREATED', createdBy: 'user-1', creationTime: '2026-01-01T00:00:00Z' }
   ],
-  totalElements: 1,
-  totalPages: 1,
-  size: 20,
-  number: 0
+  page: { size: 20, number: 0, totalElements: 1, totalPages: 1 }
 };
 
 describe('OrdersComponent', () => {

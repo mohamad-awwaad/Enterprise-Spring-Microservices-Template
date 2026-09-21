@@ -7,7 +7,6 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
-import lombok.Data;
 
 /**
  * Payload for public self-registration ({@code POST /api/public/register}).
@@ -19,25 +18,25 @@ import lombok.Data;
  * their real password later via Keycloak's own "Set Password" email). Splitting the DTOs lets
  * each endpoint validate only the fields it actually consumes.
  */
-@Data
-public class SelfRegistrationRequest {
+public record SelfRegistrationRequest(
 
-    @NotBlank(message = "Email is required")
-    @Email(message = "Invalid email format")
-    private String email;
+        @NotBlank(message = "Email is required")
+        @Email(message = "Invalid email format")
+        String email,
 
-    @Size(max = 100, message = "First name must not exceed 100 characters")
-    private String firstName;
+        @Size(max = 100, message = "First name must not exceed 100 characters")
+        String firstName,
 
-    @Size(max = 100, message = "Last name must not exceed 100 characters")
-    private String lastName;
+        @Size(max = 100, message = "Last name must not exceed 100 characters")
+        String lastName,
 
-    @Pattern(regexp = "^\\+?[1-9]\\d{1,14}$", message = "Invalid mobile number format (E.164)")
-    private String mobileNumber;
+        @Pattern(regexp = "^\\+?[1-9]\\d{1,14}$", message = "Invalid mobile number format (E.164)")
+        String mobileNumber,
 
-    private Gender gender;
+        Gender gender,
 
-    @Min(value = 0, message = "Age must be a positive number")
-    @Max(value = 150, message = "Age must be realistic")
-    private Integer age;
+        @Min(value = 0, message = "Age must be a positive number")
+        @Max(value = 150, message = "Age must be realistic")
+        Integer age
+) {
 }

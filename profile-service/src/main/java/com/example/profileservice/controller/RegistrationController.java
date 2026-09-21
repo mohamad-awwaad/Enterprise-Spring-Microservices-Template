@@ -57,7 +57,7 @@ public class RegistrationController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(Map.of(
                         "message", "If this email is not registered yet, a confirmation link has been sent.",
-                        "email", request.getEmail()
+                        "email", request.email()
                 ));
     }
 

@@ -406,6 +406,32 @@ sequenceDiagram
     BFF->>BFF: Forward request with valid token
 ```
 
+Refresh-token rotation is enabled in the realm (`revokeRefreshToken`, `refreshTokenMaxReuse=0`),
+so a refresh token can be used once. To keep concurrent requests from racing for the same
+refresh, the BFF takes a short Redis lock per session (`bff:session:<jti>:refresh-lock`); the
+other requests wait for the lock and then reuse the refreshed tokens. Details in
+[docs/proactive_token_refresh.md](docs/proactive_token_refresh.md).
+
+### Security Headers
+
+- BFF responses carry `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` (plus Spring Security's defaults; HSTS is
+  sent on HTTPS).
+- The Angular nginx image (`angular-ui/nginx.conf`) sends a CSP for the SPA, `X-Content-Type-Options`,
+  `X-Frame-Options`, `Referrer-Policy` and `Permissions-Policy`. `form-action` lists the BFF and
+  Keycloak origins because the logout form POST redirects there; adjust it for your domains.
+
+### Redis Authentication
+
+Redis requires a password (`REDIS_PASSWORD`, default `redis_password` in `compose.yaml` - change it
+outside local development). `REDIS_SSL_ENABLED=true` turns on TLS for the BFF and gateway
+connections when the Redis server offers it.
+
+### Virtual Threads
+
+The servlet services (BFF, profile, order, keycloak-admin) run with `spring.threads.virtual.enabled=true`;
+the blocking BFF proxy in particular benefits. The gateway is reactive (WebFlux) and does not use them.
+
 ---
 
 ## Frontend Integration & Session Management
@@ -517,6 +543,19 @@ Response flows back
 | GET    | `/bff/api/orders`  | List orders              |
 | POST   | `/bff/api/orders`  | Create order             |
 
+`GET /orders` returns a Spring Data `PagedModel` (`OrdersController` wraps the `Page<OrderResponse>`
+explicitly with `new PagedModel<>(page)`, so the shape doesn't depend on
+`spring.data.web.pageable.serialization-mode`):
+
+```json
+{
+  "content": [
+    { "orderNumber": "ORD-999", "status": "CREATED", "createdBy": "d9b60c5d-...", "creationTime": "2026-01-01T00:00:00.123456Z" }
+  ],
+  "page": { "size": 20, "number": 0, "totalElements": 1, "totalPages": 1 }
+}
+```
+
 ### Public Endpoints (no authentication)
 
 | Method | Endpoint                                | Description                |
@@ -611,11 +650,31 @@ included, in containers instead.
 change. Existing databases created by the old `ddl-auto=update` setup are baselined at version 1
 on first start (`spring.flyway.baseline-on-migrate=true`).
 
+`order-service`'s `V2__order_audit_columns.sql` adds Spring Data JPA auditing and optimistic
+locking to `orders`: `creation_time`/`update_time` become `timestamp(6) with time zone`
+(populated by `@CreatedDate`/`@LastModifiedDate`, backed by `java.time.Instant`), `created_by`/
+`updated_by` are populated by `@CreatedBy`/`@LastModifiedBy` via an `AuditorAware<String>`
+(`JpaAuditingConfig`) that reads the authenticated JWT's subject instead of the
+controller/service setting them by hand, and a `version bigint` column backs `@Version` for
+optimistic locking (an `OptimisticLockException` on a concurrent update instead of a silent
+last-write-wins).
+
+### SBOM and Dependency Scanning
+
+`mvn package` at the repo root generates a CycloneDX SBOM for the whole reactor at
+`target/bom.json` (the `cyclonedx-maven-plugin`'s version is inherited from
+`spring-boot-starter-parent`'s own `pluginManagement`). CI's `build` job keeps it as an artifact,
+and a report-only `security` job (stage `test`, `aquasec/trivy:latest`, `allow_failure: true`)
+runs `trivy sbom` against it plus `trivy fs` against the working tree for vulnerabilities and
+misconfigurations, publishing a JSON report as a plain artifact.
+
 ### CI and Dependency Updates
 
 `.gitlab-ci.yml` builds the Java services and the Angular app (with its unit tests), runs the
-Java tests with Testcontainers via Docker-in-Docker, offers a manual Playwright E2E job and, on
-`main` and tags, builds the Docker images. `renovate.json` keeps Maven, npm, Docker image and CI image versions up to date.
+Java tests with Testcontainers via Docker-in-Docker, scans the SBOM and working tree with Trivy
+(report-only, see [SBOM and Dependency Scanning](#sbom-and-dependency-scanning)), offers a
+manual Playwright E2E job and, on `main` and tags, builds the Docker images. `renovate.json`
+keeps Maven, npm, Docker image and CI image versions up to date.
 
 ### Angular Development
 

@@ -90,8 +90,8 @@ class ProfileIntegrationTest {
                                 .expectBody(UserProfileResponse.class)
                                 .value(p -> {
                                         assert p != null;
-                                        assertThat(p.getFirstName()).isEqualTo("Alice");
-                                        assertThat(p.getUserId()).isNotNull();
+                                        assertThat(p.firstName()).isEqualTo("Alice");
+                                        assertThat(p.userId()).isNotNull();
                                 });
 
                 // 3. Get Profile
@@ -102,7 +102,7 @@ class ProfileIntegrationTest {
                                 .expectBody(UserProfileResponse.class)
                                 .value(p -> {
                                         assert p != null;
-                                        assertThat(p.getLastName()).isEqualTo("Smith");
+                                        assertThat(p.lastName()).isEqualTo("Smith");
                                 });
 
                 // 4. Delete Profile

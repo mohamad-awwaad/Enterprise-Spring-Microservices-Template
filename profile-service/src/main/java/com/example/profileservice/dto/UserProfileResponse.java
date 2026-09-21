@@ -2,24 +2,19 @@ package com.example.profileservice.dto;
 
 import com.example.profileservice.model.UserProfileEntity;
 import com.example.profileservice.model.Gender;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
-@Data
 @Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class UserProfileResponse {
-    private String userId;
-    private String firstName;
-    private String lastName;
-    private String email;
-    private String mobileNumber;
-    private Gender gender;
-    private Integer age;
-    private Boolean enabled;
+public record UserProfileResponse(
+        String userId,
+        String firstName,
+        String lastName,
+        String email,
+        String mobileNumber,
+        Gender gender,
+        Integer age,
+        Boolean enabled
+) {
 
     public static UserProfileResponse fromEntity(UserProfileEntity entity) {
         return UserProfileResponse.builder()

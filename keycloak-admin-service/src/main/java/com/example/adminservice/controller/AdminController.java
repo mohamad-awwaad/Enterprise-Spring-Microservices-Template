@@ -59,16 +59,16 @@ public class AdminController {
 
     private static @NonNull UserRepresentation getUserRepresentation(UserDTO userDto) {
         UserRepresentation user = new UserRepresentation();
-        user.setUsername(userDto.getUsername());
-        user.setEmail(userDto.getEmail());
-        user.setFirstName(userDto.getFirstName());
-        user.setLastName(userDto.getLastName());
+        user.setUsername(userDto.username());
+        user.setEmail(userDto.email());
+        user.setFirstName(userDto.firstName());
+        user.setLastName(userDto.lastName());
         user.setEnabled(true);
 
-        if (userDto.getPassword() != null) {
+        if (userDto.password() != null) {
             CredentialRepresentation cred = new CredentialRepresentation();
             cred.setType(CredentialRepresentation.PASSWORD);
-            cred.setValue(userDto.getPassword());
+            cred.setValue(userDto.password());
             cred.setTemporary(false);
             user.setCredentials(Collections.singletonList(cred));
         }
@@ -101,10 +101,10 @@ public class AdminController {
     @PreAuthorize("hasRole('INTERNAL_SERVICE')")
     public ResponseEntity<?> registerUser(@RequestBody RegisterUserDTO dto) {
         UserRepresentation user = new UserRepresentation();
-        user.setUsername(dto.getUsername());
-        user.setEmail(dto.getEmail());
-        user.setFirstName(dto.getFirstName());
-        user.setLastName(dto.getLastName());
+        user.setUsername(dto.username());
+        user.setEmail(dto.email());
+        user.setFirstName(dto.firstName());
+        user.setLastName(dto.lastName());
         user.setEnabled(true);
         user.setEmailVerified(true); // Already verified via our confirmation flow
 
@@ -116,7 +116,7 @@ public class AdminController {
                 String userId = CreatedResponseUtil.getCreatedId(response);
 
                 // Trigger password setup email
-                if (dto.isSendPasswordEmail()) {
+                if (dto.sendPasswordEmail()) {
                     try {
                         usersResource.get(userId).executeActionsEmail(List.of("UPDATE_PASSWORD"));
                         log.info("Password setup email sent for user: {}", userId);

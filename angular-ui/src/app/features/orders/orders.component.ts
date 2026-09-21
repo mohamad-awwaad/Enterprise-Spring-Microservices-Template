@@ -167,7 +167,7 @@ export class OrdersComponent implements OnInit {
     try {
       const page = await this.ordersService.getOrders(this.pageIndex(), this.pageSize());
       this.orders.set(page.content);
-      this.totalElements.set(page.totalElements);
+      this.totalElements.set(page.page.totalElements);
     } catch (error) {
       this.snackBar.open('Failed to load orders', 'Dismiss', { duration: 3000 });
     } finally {
