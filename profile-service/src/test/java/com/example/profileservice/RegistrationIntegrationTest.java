@@ -56,6 +56,10 @@ class RegistrationIntegrationTest {
         @DynamicPropertySource
         static void keycloakProperties(DynamicPropertyRegistry registry) {
                 registry.add("spring.security.oauth2.resourceserver.jwt.issuer-uri", keycloak::issuerUri);
+                // The "internal" client-credentials registration resolves its provider metadata at
+                // startup, so it must point at the container as well or the context needs a live
+                // Keycloak on localhost:8080.
+                registry.add("spring.security.oauth2.client.provider.keycloak.issuer-uri", keycloak::issuerUri);
         }
 
         @AfterAll

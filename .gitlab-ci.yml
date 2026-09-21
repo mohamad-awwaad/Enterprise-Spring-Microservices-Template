@@ -91,7 +91,11 @@ test:
 # every trivy invocation, plus allow_failure) - it's meant to surface findings, not gate merges.
 security:
   stage: test
-  image: aquasec/trivy:latest
+  # The Trivy image's entrypoint is the trivy binary itself; GitLab needs a shell to run the
+  # script, so the entrypoint is cleared.
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
   needs: ["build"]
   allow_failure: true
   script:

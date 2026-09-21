@@ -17,6 +17,9 @@
 
     <properties>
         <java.version>25</java.version>
+        <!-- Boot 4.1.1 ships Tomcat 11.0.24, which has CVE-2026-65182/65905/68525 (CRITICAL);
+             remove this override once a Boot release manages 11.0.26 or newer. -->
+        <tomcat.version>11.0.26</tomcat.version>
         <spring-boot.version>4.1.1</spring-boot.version>
     </properties>
 
