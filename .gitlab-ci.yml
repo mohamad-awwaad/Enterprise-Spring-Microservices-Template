@@ -101,7 +101,7 @@ security:
   script:
     - trivy sbom --exit-code 0 --severity HIGH,CRITICAL target/bom.json
     - trivy sbom --exit-code 0 --severity HIGH,CRITICAL --format json --output trivy-report.json target/bom.json
-    - trivy fs --scanners vuln,misconfig --exit-code 0 .
+    - trivy fs --scanners vuln,misconfig --offline-scan --exit-code 0 .
   artifacts:
     when: always
     paths:
