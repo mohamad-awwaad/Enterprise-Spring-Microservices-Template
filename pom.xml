@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.1.2</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.example</groupId>
@@ -17,10 +17,8 @@
 
     <properties>
         <java.version>25</java.version>
-        <!-- Boot 4.1.1 ships Tomcat 11.0.24, which has CVE-2026-65182/65905/68525 (CRITICAL);
-             remove this override once a Boot release manages 11.0.26 or newer. -->
-        <tomcat.version>11.0.26</tomcat.version>
-        <spring-boot.version>4.1.1</spring-boot.version>
+        <spring-boot.version>4.1.2</spring-boot.version>
+        <keycloak-admin-client.version>26.0.12</keycloak-admin-client.version>
     </properties>
 
     <modules>

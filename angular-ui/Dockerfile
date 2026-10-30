@@ -18,7 +18,12 @@ RUN npm run build
 # ==============================================================================
 FROM nginx:alpine AS runtime
 
+RUN touch /var/run/nginx.pid && \
+    chown -R nginx:nginx /var/run/nginx.pid /var/cache/nginx /var/log/nginx /etc/nginx/conf.d
+
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=builder /build/dist/angular-ui/browser /usr/share/nginx/html
+COPY --from=builder --chown=nginx:nginx /build/dist/angular-ui/browser /usr/share/nginx/html
+
+USER nginx
 
 EXPOSE 4200
