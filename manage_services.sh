@@ -10,21 +10,25 @@ COMPOSE_FILE="compose.yaml"
 
 # Management (actuator) ports - separate from each service's public port.
 # See MANAGEMENT_PORT in .env.example.
-declare -A MGMT_PORTS=(
-    [bff]=9081
-    [gateway]=9888
-    [profile-service]=9082
-    [order-service]=9083
-    [keycloak-admin-service]=9084
-)
+get_mgmt_port() {
+    case "$1" in
+        bff) echo 9081 ;;
+        gateway) echo 9888 ;;
+        profile-service) echo 9082 ;;
+        order-service) echo 9083 ;;
+        keycloak-admin-service) echo 9084 ;;
+    esac
+}
 
-declare -A APP_PORTS=(
-    [bff]=8081
-    [gateway]=8888
-    [profile-service]=8082
-    [order-service]=8083
-    [keycloak-admin-service]=8084
-)
+get_app_port() {
+    case "$1" in
+        bff) echo 8081 ;;
+        gateway) echo 8888 ;;
+        profile-service) echo 8082 ;;
+        order-service) echo 8083 ;;
+        keycloak-admin-service) echo 8084 ;;
+    esac
+}
 
 start_services() {
     echo -e "${YELLOW}Starting SEC Microservices Environment...${NC}"
@@ -53,8 +57,8 @@ start_apps() {
     start_service_app() {
         SERVICE_DIR=$1
         NAME=$2
-        PORT=${APP_PORTS[$SERVICE_DIR]}
-        MGMT_PORT=${MGMT_PORTS[$SERVICE_DIR]}
+        PORT=$(get_app_port "$SERVICE_DIR")
+        MGMT_PORT=$(get_mgmt_port "$SERVICE_DIR")
 
         echo -e "\n${YELLOW}[Checking $NAME]${NC}"
 
@@ -64,7 +68,7 @@ start_apps() {
         else
             echo -e "${YELLOW}Starting $NAME on port $PORT (management port $MGMT_PORT)...${NC}"
             # Run in background with nohup, redirect output to a log file
-            (nohup ./mvnw -pl "$SERVICE_DIR" -am spring-boot:run > "$SERVICE_DIR/run.log" 2>&1 &)
+            (nohup ./mvnw -pl "$SERVICE_DIR" spring-boot:run > "$SERVICE_DIR/run.log" 2>&1 &)
 
             # Poll the readiness probe instead of guessing with a fixed sleep.
             for i in $(seq 1 30); do
